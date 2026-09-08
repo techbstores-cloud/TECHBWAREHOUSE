@@ -1,0 +1,14 @@
+node_modules/
+
+# Runtime data - contains real business data and credential hashes.
+# The server auto-seeds fresh defaults (incl. a new admin login) if these are absent.
+data.json
+data.json.tmp
+data.json.broken-*
+users.json
+users.json.tmp
+roles.json
+roles.json.tmp
+
+# Logs
+*.log

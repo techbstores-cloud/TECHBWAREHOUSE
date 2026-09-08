@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TechB</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="loginScreen" class="login-screen">
+  <form id="loginForm" class="login-card">
+    <div class="brand-mark" style="width:44px;height:44px;font-size:16px;margin:0 auto 14px">TB</div>
+    <h1>TechB</h1>
+    <p class="hint" style="text-align:center;margin-top:-6px">Sign in to continue</p>
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" id="loginUsername" autocomplete="username" required>
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="loginPassword" autocomplete="current-password" required>
+    </div>
+    <div id="loginError" class="login-error" hidden></div>
+    <button type="submit" class="primary-btn" style="width:100%;padding:10px" id="loginSubmitBtn">Log in</button>
+  </form>
+</div>
+
+<header class="mobile-topbar">
+  <button id="mobileMenuBtn" class="mobile-menu-btn" aria-label="Open menu">&#9776;</button>
+  <div class="brand-mark">TB</div>
+  <div class="brand-title">TechB</div>
+</header>
+<div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
+
+<div class="app">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">TB</div>
+      <div class="brand-text">
+        <div class="brand-title">TechB</div>
+        <div class="brand-sub">8-store operations</div>
+      </div>
+      <button id="sidebarCloseBtn" class="mobile-menu-btn sidebar-close-btn" aria-label="Close menu">&times;</button>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-btn active" data-view="dashboard">
+        <span class="nav-icon">&#9635;</span> Dashboard
+      </button>
+      <button class="nav-btn" data-view="stock">
+        <span class="nav-icon">&#128230;</span> Stock Tracking
+      </button>
+      <button class="nav-btn" data-view="tasks">
+        <span class="nav-icon">&#9989;</span> Daily Tasks
+      </button>
+      <button class="nav-btn" data-view="deliveries">
+        <span class="nav-icon">&#128666;</span> Deliveries
+      </button>
+      <button class="nav-btn" data-view="reports">
+        <span class="nav-icon">&#128202;</span> Reports
+      </button>
+      <button class="nav-btn" data-view="staff">
+        <span class="nav-icon">&#128100;</span> Staff
+      </button>
+      <button class="nav-btn" data-view="deliveryStaff">
+        <span class="nav-icon">&#128666;</span> Delivery Staff
+      </button>
+      <button class="nav-btn" data-view="stores">
+        <span class="nav-icon">&#127970;</span> Stores
+      </button>
+      <button class="nav-btn" data-view="dealers">
+        <span class="nav-icon">&#128188;</span> Dealers
+      </button>
+      <button class="nav-btn" data-view="settings">
+        <span class="nav-icon">&#9881;</span> Status Settings
+      </button>
+      <button class="nav-btn" data-view="users">
+        <span class="nav-icon">&#128272;</span> Users
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div id="currentUserBadge" class="storage-note" style="font-weight:600;color:#e4e9f2"></div>
+      <button id="logoutBtn" class="ghost-btn">Log out</button>
+      <button id="exportBtn" class="ghost-btn">Export backup</button>
+      <button id="importBtn" class="ghost-btn">Import backup</button>
+      <input type="file" id="importFile" accept="application/json" hidden>
+      <button id="autoBackupBtn" class="ghost-btn">Choose auto-backup folder...</button>
+      <div id="autoBackupStatus" class="storage-note"></div>
+      <div class="storage-note">Shared with everyone on this server. Export a backup regularly.</div>
+    </div>
+  </aside>
+
+  <main class="content">
+
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view active">
+      <header class="view-header">
+        <h1>Dashboard</h1>
+        <div class="range-controls">
+          <label>From <input type="date" id="dashFrom"></label>
+          <label>To <input type="date" id="dashTo"></label>
+          <div class="quick-range">
+            <button class="chip" data-range="today">Today</button>
+            <button class="chip" data-range="week">This week</button>
+            <button class="chip" data-range="month">This month</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="cards" id="summaryCards"></div>
+
+      <div class="panel">
+        <h2>Task completion by employee</h2>
+        <div id="employeeCompletion" class="employee-list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Deliveries by employee</h2>
+        <div id="deliveryCompletion" class="employee-list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Stock progress by serial number</h2>
+        <div id="stockSerialProgress" class="employee-list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Stock progress by status</h2>
+        <div id="stockPipeline" class="pipeline-list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Deliveries by store</h2>
+        <div id="deliveryByStore" class="pipeline-list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Recent deliveries</h2>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="recentDeliveriesTable">
+            <thead>
+              <tr>
+                <th>Transfer ID</th>
+                <th>Store</th>
+                <th>Packages</th>
+                <th>Assigned to</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="recentDeliveriesBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="recentDeliveriesEmpty" hidden>No deliveries in this date range.</div>
+      </div>
+    </section>
+
+    <!-- STOCK TRACKING -->
+    <section id="view-stock" class="view">
+      <header class="view-header">
+        <h1>Stock Tracking</h1>
+        <div class="header-actions">
+          <button class="secondary-btn" id="manageCategoriesBtn">Manage categories</button>
+          <button class="primary-btn" id="addStockBtn">+ Add received stock</button>
+        </div>
+      </header>
+
+      <div class="quick-range" style="margin-bottom:12px">
+        <button class="chip active" data-stock-tab="active">Active stock</button>
+        <button class="chip" data-stock-tab="delayed">Delayed (10+ days)</button>
+        <button class="chip" data-stock-tab="completed">Completed stock</button>
+      </div>
+
+      <div class="filters">
+        <select id="stockFilterCategory"><option value="">All categories</option></select>
+        <select id="stockFilterDealer"><option value="">All dealers</option></select>
+        <select id="stockFilterStatus"><option value="">All statuses</option></select>
+        <input type="text" id="stockSearchSerial" placeholder="Search serial no...">
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="data-table" id="stockTable">
+          <thead>
+            <tr>
+              <th>Serial No.</th>
+              <th>Category</th>
+              <th>Qty</th>
+              <th>Dealer</th>
+              <th>Received</th>
+              <th>Days</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Last update</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="stockTableBody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="stockEmpty" hidden>No stock entries yet. Click "Add received stock" to log one.</div>
+    </section>
+
+    <!-- TASKS -->
+    <section id="view-tasks" class="view">
+      <header class="view-header">
+        <h1>Daily Tasks</h1>
+        <div class="header-actions">
+          <input type="date" id="taskDate">
+          <button class="secondary-btn" id="manageTaskCatalogBtn">Manage task list</button>
+          <button class="primary-btn" id="addTaskBtn">+ Assign task</button>
+        </div>
+      </header>
+
+      <div class="filters">
+        <select id="taskFilterStaff"><option value="">All staff</option></select>
+        <select id="taskFilterStore"><option value="">All stores</option></select>
+        <select id="taskFilterStatus">
+          <option value="">All</option>
+          <option value="pending">Pending</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="data-table" id="taskTable">
+          <thead>
+            <tr>
+              <th>Task</th>
+              <th>Assigned to</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="taskTableBody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="taskEmpty" hidden>No tasks for this date yet. Click "Assign task" to add one.</div>
+    </section>
+
+    <!-- DELIVERIES -->
+    <section id="view-deliveries" class="view">
+      <header class="view-header">
+        <h1>Deliveries</h1>
+        <button class="primary-btn" id="addDeliveryBtn">+ Create delivery</button>
+      </header>
+      <p class="hint" style="margin-top:0">Log what's going out first (stock, item, boxes, packages) — assign a delivery person to each one when you're ready.</p>
+
+      <div class="quick-range" style="margin-bottom:12px">
+        <button class="chip active" data-delivery-tab="active">Active</button>
+        <button class="chip" data-delivery-tab="delayed">Delayed (5+ days)</button>
+        <button class="chip" data-delivery-tab="delivered">Delivered</button>
+      </div>
+
+      <div class="filters">
+        <select id="deliveryFilterStaff">
+          <option value="">All delivery staff</option>
+          <option value="__unassigned__">Unassigned only</option>
+        </select>
+        <select id="deliveryFilterStore"><option value="">All stores</option></select>
+        <select id="deliveryFilterStatus">
+          <option value="">All</option>
+          <option value="pending">Pending</option>
+          <option value="in_transit">In Transit</option>
+          <option value="delivered">Delivered</option>
+        </select>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="data-table" id="deliveryTable">
+          <thead>
+            <tr>
+              <th>Store</th>
+              <th>Transfer ID</th>
+              <th>Box</th>
+              <th>Packages</th>
+              <th>Assigned to</th>
+              <th>Date</th>
+              <th>Days</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="deliveryTableBody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="deliveryEmpty" hidden>No deliveries logged yet. Click "Assign delivery" to add one.</div>
+    </section>
+
+    <!-- REPORTS -->
+    <section id="view-reports" class="view">
+      <header class="view-header">
+        <h1>Reports</h1>
+        <div class="range-controls">
+          <label>From <input type="date" id="reportFrom"></label>
+          <label>To <input type="date" id="reportTo"></label>
+          <div class="quick-range">
+            <button class="chip" data-report-range="today">Today</button>
+            <button class="chip" data-report-range="week">This week</button>
+            <button class="chip" data-report-range="month">This month</button>
+            <button class="chip active" data-report-range="all">All time</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="quick-range" style="margin-bottom:16px;flex-wrap:wrap">
+        <button class="chip active" data-report-type="employee">Employee performance</button>
+        <button class="chip" data-report-type="deliveryEmployee">Delivery staff performance</button>
+        <button class="chip" data-report-type="tasks">Tasks</button>
+        <button class="chip" data-report-type="deliveries">Deliveries</button>
+        <button class="chip" data-report-type="stock">Stock received</button>
+        <button class="chip" data-report-type="stockCategory">Stock by category</button>
+        <button class="chip" data-report-type="stockDealer">Stock by dealer</button>
+        <button class="chip" data-report-type="store">Store activity</button>
+      </div>
+
+      <!-- EMPLOYEE PERFORMANCE (tasks) -->
+      <div class="report-panel panel" data-report-panel="employee">
+        <h2>Employee performance report</h2>
+        <p class="hint" style="margin-top:0">Based on tasks assigned to Staff in this date range.</p>
+        <div id="topPerformerCard"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="employeeReportTable" style="margin-top:14px">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Employee</th>
+                <th>Tasks</th>
+                <th>Task %</th>
+              </tr>
+            </thead>
+            <tbody id="employeeReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="employeeReportEmpty" hidden>No staff activity in this date range.</div>
+      </div>
+
+      <!-- DELIVERY STAFF PERFORMANCE -->
+      <div class="report-panel panel" data-report-panel="deliveryEmployee" hidden>
+        <h2>Delivery staff performance report</h2>
+        <p class="hint" style="margin-top:0">Based on deliveries assigned to Delivery Staff in this date range.</p>
+        <div id="topDeliveryPerformerCard"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="deliveryEmployeeReportTable" style="margin-top:14px">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Delivery staff</th>
+                <th>Deliveries</th>
+                <th>Delivered %</th>
+                <th>Packages delivered</th>
+              </tr>
+            </thead>
+            <tbody id="deliveryEmployeeReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="deliveryEmployeeReportEmpty" hidden>No delivery activity in this date range.</div>
+      </div>
+
+      <!-- TASKS -->
+      <div class="report-panel panel" data-report-panel="tasks" hidden>
+        <h2>Task report</h2>
+        <div class="filters">
+          <select id="taskReportFilterStaff"><option value="">All staff</option></select>
+          <select id="taskReportFilterStore"><option value="">All stores</option></select>
+          <select id="taskReportFilterStatus">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+        <div class="cards" id="taskReportCards" style="margin-bottom:14px"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="taskReportTable">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Assigned to</th>
+                <th>Store(s)</th>
+                <th>Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="taskReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="taskReportEmpty" hidden>No tasks in this date range.</div>
+      </div>
+
+      <!-- DELIVERIES -->
+      <div class="report-panel panel" data-report-panel="deliveries" hidden>
+        <h2>Delivery report</h2>
+        <div class="filters">
+          <select id="deliveryReportFilterStaff"><option value="">All delivery staff</option></select>
+          <select id="deliveryReportFilterStore"><option value="">All stores</option></select>
+          <select id="deliveryReportFilterStatus">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="in_transit">In Transit</option>
+            <option value="delivered">Delivered</option>
+          </select>
+          <input type="text" id="deliveryReportSearchTransfer" placeholder="Search transfer ID...">
+        </div>
+        <div class="cards" id="deliveryReportCards" style="margin-bottom:14px"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="deliveryReportTable">
+            <thead>
+              <tr>
+                <th>Transfer ID</th>
+                <th>Store</th>
+                <th>Linked stock</th>
+                <th>Box</th>
+                <th>Packages</th>
+                <th>Assigned to</th>
+                <th>Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="deliveryReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="deliveryReportEmpty" hidden>No deliveries in this date range.</div>
+      </div>
+
+      <!-- STOCK RECEIVED -->
+      <div class="report-panel panel" data-report-panel="stock" hidden>
+        <h2>Stock received report</h2>
+        <div class="filters">
+          <select id="reportFilterCategory"><option value="">All categories</option></select>
+          <select id="reportFilterDealer"><option value="">All dealers</option></select>
+          <select id="reportFilterStatus"><option value="">All statuses</option></select>
+        </div>
+        <div class="cards" id="stockReportCards" style="margin-bottom:14px"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="stockReportTable">
+            <thead>
+              <tr>
+                <th>Serial No.</th>
+                <th>Category</th>
+                <th>Dealer</th>
+                <th>Quantity</th>
+                <th>Received date</th>
+                <th>Status</th>
+                <th>Progress</th>
+              </tr>
+            </thead>
+            <tbody id="stockReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="stockReportEmpty" hidden>No stock received in this date range.</div>
+      </div>
+
+      <!-- STOCK BY CATEGORY -->
+      <div class="report-panel panel" data-report-panel="stockCategory" hidden>
+        <h2>Stock by category</h2>
+        <div class="filters">
+          <select id="stockCategoryReportFilterDealer"><option value="">All dealers</option></select>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="stockCategoryReportTable">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Entries</th>
+                <th>Total quantity</th>
+                <th>Completed</th>
+                <th>In pipeline</th>
+                <th>Delayed</th>
+              </tr>
+            </thead>
+            <tbody id="stockCategoryReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="stockCategoryReportEmpty" hidden>No stock received in this date range.</div>
+      </div>
+
+      <!-- STOCK BY DEALER -->
+      <div class="report-panel panel" data-report-panel="stockDealer" hidden>
+        <h2>Stock by dealer</h2>
+        <div class="filters">
+          <select id="stockDealerReportFilterCategory"><option value="">All categories</option></select>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="stockDealerReportTable">
+            <thead>
+              <tr>
+                <th>Dealer</th>
+                <th>Phone</th>
+                <th>Entries</th>
+                <th>Total quantity</th>
+                <th>Completed</th>
+                <th>In pipeline</th>
+                <th>Delayed</th>
+              </tr>
+            </thead>
+            <tbody id="stockDealerReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="stockDealerReportEmpty" hidden>No stock received in this date range.</div>
+      </div>
+
+      <!-- STORE ACTIVITY -->
+      <div class="report-panel panel" data-report-panel="store" hidden>
+        <h2>Store activity report</h2>
+        <p class="hint" style="margin-top:0">Based on tasks and deliveries tagged to each store in this date range.</p>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="storeReportTable">
+            <thead>
+              <tr>
+                <th>Store</th>
+                <th>Tasks</th>
+                <th>Task %</th>
+                <th>Deliveries</th>
+                <th>Delivery %</th>
+                <th>Packages delivered</th>
+              </tr>
+            </thead>
+            <tbody id="storeReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="storeReportEmpty" hidden>No store activity in this date range.</div>
+      </div>
+    </section>
+
+    <!-- STAFF -->
+    <section id="view-staff" class="view">
+      <header class="view-header">
+        <h1>Staff</h1>
+        <button class="primary-btn" id="addStaffBtn">+ Add staff</button>
+      </header>
+      <div style="overflow-x:auto">
+        <table class="data-table" id="staffTable">
+          <thead>
+            <tr><th>Emp ID</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="staffTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- DELIVERY STAFF -->
+    <section id="view-deliveryStaff" class="view">
+      <header class="view-header">
+        <h1>Delivery Staff</h1>
+        <button class="primary-btn" id="addDeliveryStaffBtn">+ Add delivery staff</button>
+      </header>
+      <p class="hint" style="margin-top:0">Kept separate from regular Staff — only people on this list can be assigned deliveries.</p>
+      <div style="overflow-x:auto">
+        <table class="data-table" id="deliveryStaffTable">
+          <thead>
+            <tr><th>Emp ID</th><th>Name</th><th>Phone</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="deliveryStaffTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- STORES -->
+    <section id="view-stores" class="view">
+      <header class="view-header">
+        <h1>Stores</h1>
+        <button class="primary-btn" id="addStoreBtn">+ Add store</button>
+      </header>
+      <div style="overflow-x:auto">
+        <table class="data-table" id="storeTable">
+          <thead><tr><th>Store name</th><th></th></tr></thead>
+          <tbody id="storeTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- DEALERS -->
+    <section id="view-dealers" class="view">
+      <header class="view-header">
+        <h1>Dealers</h1>
+        <button class="primary-btn" id="addDealerBtn">+ Add dealer</button>
+      </header>
+      <div style="overflow-x:auto">
+        <table class="data-table" id="dealerTable">
+          <thead><tr><th>Dealer name</th><th>Phone</th><th></th></tr></thead>
+          <tbody id="dealerTableBody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="dealerEmpty" hidden>No dealers added yet. Click "+ Add dealer" to log one.</div>
+    </section>
+
+    <!-- SETTINGS: STATUS LIST -->
+    <section id="view-settings" class="view">
+      <header class="view-header">
+        <h1>Stock Status List</h1>
+        <button class="primary-btn" id="addStatusBtn">+ Add status</button>
+      </header>
+      <p class="hint">Define the stages a stock item moves through, in order — e.g. Received at Warehouse &rarr; Under Verification &rarr; In Transit &rarr; Transferred to Office. Drag to reorder using the up/down buttons.</p>
+      <div style="overflow-x:auto">
+        <table class="data-table" id="statusTable">
+          <thead><tr><th>#</th><th>Status name</th><th>Color</th><th></th></tr></thead>
+          <tbody id="statusTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- USERS & ROLES -->
+    <section id="view-users" class="view">
+      <header class="view-header">
+        <h1>Users &amp; Roles</h1>
+        <div class="header-actions">
+          <button class="primary-btn" id="addUserBtn">+ Add user</button>
+          <button class="secondary-btn" id="addRoleBtn">+ Add role</button>
+        </div>
+      </header>
+
+      <div class="quick-range" style="margin-bottom:16px">
+        <button class="chip active" data-users-tab="users">Users</button>
+        <button class="chip" data-users-tab="roles">Roles</button>
+      </div>
+
+      <div class="users-tab-panel" data-users-panel="users">
+        <div style="overflow-x:auto">
+          <table class="data-table" id="userTable">
+            <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
+            <tbody id="userTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="users-tab-panel" data-users-panel="roles" hidden>
+        <p class="hint" style="margin-top:0">Each role grants <strong>No access</strong>, <strong>View only</strong>, or <strong>Full access</strong> to every section of the app — assign roles to users on the Users tab.</p>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="roleTable">
+            <thead><tr><th>Role name</th><th>Users assigned</th><th></th></tr></thead>
+            <tbody id="roleTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- MODAL -->
+<div id="modalOverlay" class="modal-overlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle">Title</h2>
+      <button class="icon-btn" id="modalClose">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<!-- STOCK DETAIL / HISTORY MODAL -->
+<div id="historyOverlay" class="modal-overlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Status history</h2>
+      <button class="icon-btn" id="historyClose">&times;</button>
+    </div>
+    <div class="modal-body" id="historyBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
