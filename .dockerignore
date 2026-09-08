@@ -1,0 +1,7 @@
+node_modules
+.git
+data.json
+users.json
+roles.json
+*.log
+*.tmp

@@ -6,9 +6,13 @@ const os = require('os');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'data.json');
-const USERS_FILE = path.join(__dirname, 'users.json');
-const ROLES_FILE = path.join(__dirname, 'roles.json');
+// DATA_DIR lets a host with a persistent disk (e.g. a Fly.io volume) point
+// storage somewhere durable; defaults to next to the code for local/PC use.
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h sliding
 
 function uid() {
