@@ -6,6 +6,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY app.js index.html style.css server.js ./
+COPY vendor ./vendor
 
 ENV DATA_DIR=/data
 ENV PORT=3000

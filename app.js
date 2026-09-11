@@ -39,6 +39,7 @@ function defaultState() {
     statuses: [
       { id: uid(), name: 'Received at Warehouse' },
       { id: uid(), name: 'Under Verification' },
+      { id: uid(), name: 'Verification Done' },
       { id: uid(), name: 'Ready for Transfer' },
       { id: uid(), name: 'In Transit to Office' },
       { id: uid(), name: 'Transferred to Office' }
@@ -56,7 +57,13 @@ function defaultState() {
     ].map(name => ({ id: uid(), name })),
     deliveries: [],
     dealers: [],
+    localPurchases: [],
+    localDealers: [],
+    lpItemCatalog: [],
+    lpBrandModelCatalog: [],
+    lpReturnReasons: [],
     stockSerialCounter: 0,
+    deliverySerialCounter: 0,
     deliveryStaff: []
   };
 }
@@ -64,6 +71,11 @@ function defaultState() {
 function nextStockSerial(state) {
   state.stockSerialCounter = (state.stockSerialCounter || 0) + 1;
   return 'SN-' + String(state.stockSerialCounter).padStart(4, '0');
+}
+
+function nextDeliverySerial(state) {
+  state.deliverySerialCounter = (state.deliverySerialCounter || 0) + 1;
+  return 'DEL-' + String(state.deliverySerialCounter).padStart(4, '0');
 }
 
 function normalizeState(parsed) {
@@ -75,12 +87,30 @@ function normalizeState(parsed) {
   parsed.productCategories = parsed.productCategories || [];
   parsed.deliveries = parsed.deliveries || [];
   parsed.dealers = parsed.dealers || [];
+  parsed.localPurchases = parsed.localPurchases || [];
+  parsed.localDealers = parsed.localDealers || [];
+  parsed.lpItemCatalog = parsed.lpItemCatalog || [];
+  parsed.lpBrandModelCatalog = parsed.lpBrandModelCatalog || [];
+  parsed.lpReturnReasons = parsed.lpReturnReasons || [];
+  parsed.localPurchases.forEach(p => { if (!p.status) p.status = 'RECEIVED'; });
   parsed.stockSerialCounter = parsed.stockSerialCounter || 0;
+  parsed.deliverySerialCounter = parsed.deliverySerialCounter || 0;
   parsed.deliveryStaff = parsed.deliveryStaff || [];
 
   const unserialized = parsed.stockItems.filter(i => !i.serialNumber)
     .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
   unserialized.forEach(item => { item.serialNumber = nextStockSerial(parsed); });
+
+  const unidentifiedDeliveries = parsed.deliveries.filter(d => !d.deliveryId)
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  unidentifiedDeliveries.forEach(d => { d.deliveryId = nextDeliverySerial(parsed); });
+
+  /* Deliveries used to hold a single transferId; they can now carry
+     several (e.g. multiple transfers going out on one truck run). */
+  parsed.deliveries.forEach(d => {
+    if (!Array.isArray(d.transferIds)) d.transferIds = d.transferId ? [d.transferId] : [];
+    delete d.transferId;
+  });
 
   /* One-time migration: deliveries used to reference the general Staff
      list. Move anyone who was ever assigned a delivery into their own
@@ -101,6 +131,13 @@ function normalizeState(parsed) {
     });
     parsed.deliveries.forEach(d => { if (d.staffId && idMap[d.staffId]) d.staffId = idMap[d.staffId]; });
   }
+
+  /* Deliveries used to reference a single staffId; a delivery can now be
+     assigned to multiple delivery staff, so it holds a staffIds array. */
+  parsed.deliveries.forEach(d => {
+    if (!Array.isArray(d.staffIds)) d.staffIds = d.staffId ? [d.staffId] : [];
+    delete d.staffId;
+  });
 
   return parsed;
 }
@@ -199,7 +236,7 @@ async function pollServer() {
 }
 
 /* ---------- Navigation ---------- */
-const views = ['dashboard', 'stock', 'tasks', 'deliveries', 'reports', 'staff', 'deliveryStaff', 'stores', 'dealers', 'settings', 'users'];
+const views = ['dashboard', 'stock', 'tasks', 'deliveries', 'reports', 'staff', 'deliveryStaff', 'stores', 'dealers', 'localPurchases', 'settings', 'users'];
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => { switchView(btn.dataset.view); closeMobileSidebar(); });
 });
@@ -232,6 +269,7 @@ function switchView(name) {
   if (name === 'deliveryStaff') renderDeliveryStaff();
   if (name === 'stores') renderStores();
   if (name === 'dealers') renderDealers();
+  if (name === 'localPurchases') renderLocalPurchases();
   if (name === 'settings') renderSettings();
   if (name === 'users') renderUsers();
   applyModuleReadonly(name);
@@ -300,6 +338,175 @@ function buildStoreMultiSelect(selectedIds) {
   wrap.appendChild(panel);
   return { el: wrap, getSelected: () => [...selected] };
 }
+
+/* Same pattern as buildStoreMultiSelect, for assigning a delivery to
+   more than one delivery staff member at once. */
+function buildDeliveryStaffMultiSelect(selectedIds) {
+  const selected = new Set(selectedIds || []);
+  const wrap = document.createElement('div');
+  wrap.className = 'multiselect';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'multiselect-toggle';
+  btn.innerHTML = `<span class="ms-label"></span><span class="ms-caret">&#9662;</span>`;
+
+  const panel = document.createElement('div');
+  panel.className = 'multiselect-panel';
+  panel.hidden = true;
+
+  function updateLabel() {
+    const label = btn.querySelector('.ms-label');
+    if (selected.size === 0) { label.textContent = 'Delivery staff'; return; }
+    const names = state.deliveryStaff.filter(s => selected.has(s.id)).map(deliveryPersonLabel);
+    label.textContent = names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
+  }
+
+  const activeStaff = state.deliveryStaff.filter(s => s.active !== false);
+  if (activeStaff.length === 0) {
+    panel.innerHTML = `<div style="padding:6px 8px;color:var(--text-muted);font-size:12.5px">No delivery staff set up yet.</div>`;
+  }
+  activeStaff.forEach(person => {
+    const row = document.createElement('label');
+    row.className = 'multiselect-option';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = person.id;
+    cb.checked = selected.has(person.id);
+    cb.addEventListener('change', () => {
+      if (cb.checked) selected.add(person.id); else selected.delete(person.id);
+      updateLabel();
+    });
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(deliveryPersonLabel(person)));
+    panel.appendChild(row);
+  });
+
+  btn.addEventListener('click', () => { panel.hidden = !panel.hidden; });
+  updateLabel();
+  wrap.appendChild(btn);
+  wrap.appendChild(panel);
+  return { el: wrap, getSelected: () => [...selected] };
+}
+
+/* Freeform "add multiple values" input: type a value, press Enter or
+   click +Add, it becomes a removable chip. Used for entering more than
+   one Transfer ID on a single delivery. Returns {el, getValues()}. */
+function buildTagInput(initialValues, placeholder) {
+  const values = [...(initialValues || [])];
+  const wrap = document.createElement('div');
+
+  const inputRow = document.createElement('div');
+  inputRow.style.cssText = 'display:flex;gap:6px';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = placeholder || 'Add a value...';
+  input.style.flex = '1';
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'secondary-btn';
+  addBtn.textContent = '+ Add';
+  inputRow.appendChild(input);
+  inputRow.appendChild(addBtn);
+
+  const chips = document.createElement('div');
+  chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px';
+
+  function renderChips() {
+    chips.innerHTML = '';
+    values.forEach((val, idx) => {
+      const chip = document.createElement('span');
+      chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;background:#eef1f5;border-radius:12px;padding:2px 8px;font-size:12px';
+      chip.textContent = val;
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '×';
+      removeBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:14px;line-height:1;color:var(--text-muted);padding:0';
+      removeBtn.addEventListener('click', () => { values.splice(idx, 1); renderChips(); });
+      chip.appendChild(removeBtn);
+      chips.appendChild(chip);
+    });
+  }
+
+  function addValue() {
+    const val = input.value.trim();
+    if (!val) return;
+    values.push(val);
+    input.value = '';
+    renderChips();
+    input.focus();
+  }
+  addBtn.addEventListener('click', addValue);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); addValue(); }
+  });
+
+  renderChips();
+  wrap.appendChild(inputRow);
+  wrap.appendChild(chips);
+  return { el: wrap, getValues: () => [...values] };
+}
+
+/* Reusable searchable single-select ("dropdown with a search bar"):
+   a text input that filters a list of options as you type; you must
+   click a matching option to set a value (typing alone doesn't count,
+   so the result is always a real catalog entry, never free text).
+   Reuses .multiselect/.multiselect-panel so it gets the same
+   click-outside-to-close behavior as the multi-select above for free. */
+function buildSearchSelect({ items, getId, getLabel, initialId, placeholder }) {
+  let selectedId = initialId || null;
+  const wrap = document.createElement('div');
+  wrap.className = 'multiselect';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'multiselect-toggle';
+  input.placeholder = placeholder || 'Search...';
+  input.autocomplete = 'off';
+
+  const panel = document.createElement('div');
+  panel.className = 'multiselect-panel';
+  panel.hidden = true;
+
+  function renderOptions(query) {
+    const q = (query || '').trim().toLowerCase();
+    const matches = q ? items.filter(it => getLabel(it).toLowerCase().includes(q)) : items;
+    panel.innerHTML = '';
+    if (matches.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:6px 8px;color:var(--text-muted);font-size:12.5px';
+      empty.textContent = 'No matches.';
+      panel.appendChild(empty);
+      return;
+    }
+    matches.forEach(it => {
+      const row = document.createElement('div');
+      row.className = 'multiselect-option';
+      row.style.cursor = 'pointer';
+      row.textContent = getLabel(it);
+      row.addEventListener('mousedown', ev => {
+        ev.preventDefault();
+        selectedId = getId(it);
+        input.value = getLabel(it);
+        panel.hidden = true;
+      });
+      panel.appendChild(row);
+    });
+  }
+
+  input.addEventListener('focus', () => { renderOptions(input.value); panel.hidden = false; });
+  input.addEventListener('input', () => { selectedId = null; renderOptions(input.value); panel.hidden = false; });
+
+  if (initialId) {
+    const found = items.find(it => getId(it) === initialId);
+    if (found) input.value = getLabel(found);
+  }
+
+  wrap.appendChild(input);
+  wrap.appendChild(panel);
+  return { el: wrap, getValue: () => selectedId };
+}
+
 document.addEventListener('click', e => {
   document.querySelectorAll('.multiselect').forEach(ms => {
     if (!ms.contains(e.target)) {
@@ -373,7 +580,7 @@ function renderDashboard() {
     ? Math.round(state.stockItems.reduce((sum, s) => sum + statusProgressPct(s.statusId), 0) / state.stockItems.length)
     : 0;
   const delayedStockCount = state.stockItems.filter(isStockDelayed).length;
-  const unassignedDeliveryCount = state.deliveries.filter(d => !d.staffId).length;
+  const unassignedDeliveryCount = state.deliveries.filter(d => !d.staffIds || d.staffIds.length === 0).length;
   const delayedDeliveryCount = state.deliveries.filter(isDeliveryDelayed).length;
 
   const deliveriesInRange = state.deliveries.filter(d => d.date >= from && d.date <= to);
@@ -418,9 +625,9 @@ function renderDashboard() {
     `<div class="empty-state">No staff yet. Add staff in the Staff tab, then assign tasks.</div>`;
 
   const activeDeliveryStaff = state.deliveryStaff.filter(s => s.active !== false);
-  const staffWithDeliveries = activeDeliveryStaff.filter(person => deliveriesInRange.some(d => d.staffId === person.id));
+  const staffWithDeliveries = activeDeliveryStaff.filter(person => deliveriesInRange.some(d => (d.staffIds || []).includes(person.id)));
   const deliveryRows = staffWithDeliveries.map(person => {
-    const mine = deliveriesInRange.filter(d => d.staffId === person.id);
+    const mine = deliveriesInRange.filter(d => (d.staffIds || []).includes(person.id));
     const done = mine.filter(d => d.status === 'delivered').length;
     const packages = mine.reduce((sum, d) => sum + (Number(d.packages) || 0), 0);
     const pct = mine.length ? Math.round((done / mine.length) * 100) : 0;
@@ -481,13 +688,14 @@ function renderDashboard() {
     .slice(0, 8);
   document.getElementById('recentDeliveriesBody').innerHTML = recentDeliveries.map(d => {
     const store = storeById(d.storeId);
-    const person = deliveryPersonById(d.staffId);
+    const staffNames = deliveryStaffLabel(d);
     return `
       <tr>
-        <td>${escapeHtml(d.transferId || '—')}</td>
+        <td>${escapeHtml(d.deliveryId || '—')}</td>
+        <td>${escapeHtml(deliveryTransferIdsLabel(d) || '—')}</td>
         <td>${escapeHtml(store ? store.name : 'Unknown store')}</td>
         <td>${escapeHtml(d.packages)}</td>
-        <td>${person ? escapeHtml(deliveryPersonLabel(person)) : '<span class="badge badge-pending">Unassigned</span>'}</td>
+        <td>${staffNames ? escapeHtml(staffNames) : '<span class="badge badge-pending">Unassigned</span>'}</td>
         <td>${deliveryStatusBadgeHtml(d.status)}</td>
       </tr>`;
   }).join('');
@@ -498,6 +706,16 @@ function renderDashboard() {
    STOCK TRACKING
    ========================================================= */
 function statusById(id) { return state.statuses.find(s => s.id === id); }
+function stockQuantityLabel(item) {
+  return (item.quantity != null && item.quantity !== '')
+    ? escapeHtml(item.quantity)
+    : '<span style="color:var(--text-muted)">Pending verification</span>';
+}
+function packagesCountLabel(item) {
+  return (item.packagesCount != null && item.packagesCount !== '')
+    ? escapeHtml(item.packagesCount)
+    : '—';
+}
 
 /* First status = 0%, last status = 100%, evenly spread in between. */
 function statusProgressPct(statusId) {
@@ -528,6 +746,17 @@ function staffLabel(person) { return person ? (person.empId ? `${person.name} ($
    "Delivery Staff" tab. Deliveries reference deliveryStaff ids only. */
 function deliveryPersonById(id) { return state.deliveryStaff.find(s => s.id === id); }
 function deliveryPersonLabel(person) { return person ? (person.empId ? `${person.name} (${person.empId})` : person.name) : ''; }
+/* A delivery can be assigned to more than one delivery staff member at once. */
+function deliveryStaffLabel(delivery) {
+  const names = (delivery.staffIds || [])
+    .map(id => deliveryPersonById(id))
+    .filter(Boolean)
+    .map(deliveryPersonLabel);
+  return names.join(', ');
+}
+function deliveryTransferIdsLabel(delivery) {
+  return (delivery.transferIds || []).join(', ');
+}
 
 function categoryById(id) { return state.productCategories.find(c => c.id === id); }
 function dealerById(id) { return state.dealers.find(d => d.id === id); }
@@ -609,7 +838,8 @@ function renderStock() {
       <tr${delayed ? ' style="background:var(--red-soft)"' : ''}>
         <td><strong>${escapeHtml(item.serialNumber || '—')}</strong></td>
         <td>${escapeHtml(category ? category.name : 'Uncategorized')}${item.notes ? `<div style="color:var(--text-muted);font-size:11.5px;margin-top:2px">${escapeHtml(item.notes)}</div>` : ''}</td>
-        <td>${escapeHtml(item.quantity)} ${escapeHtml(item.unit || '')}</td>
+        <td>${stockQuantityLabel(item)}</td>
+        <td>${packagesCountLabel(item)}</td>
         <td>${escapeHtml(dealerLabel(item))}</td>
         <td>${fmtDate(item.receivedDate)}</td>
         <td style="${delayed ? 'color:var(--red);font-weight:600' : ''}">${days}d</td>
@@ -644,7 +874,20 @@ function renderStock() {
   document.querySelector('.chip[data-stock-tab="completed"]').textContent = `Completed stock (${allCompletedCount})`;
 
   tbody.querySelectorAll('.status-select').forEach(sel => {
-    sel.addEventListener('change', () => changeStockStatus(sel.dataset.id, sel.value));
+    sel.addEventListener('change', () => {
+      const newStatusId = sel.value;
+      const item = state.stockItems.find(i => i.id === sel.dataset.id);
+      if (isVerificationDoneStatus(newStatusId)) {
+        const prevStatusId = item.statusId;
+        sel.value = prevStatusId; // revert until quantity is confirmed; renderStock() sets the real value after
+        promptStockVerificationQuantity(item.quantity, qty => {
+          item.quantity = qty;
+          changeStockStatus(item.id, newStatusId, `Verified quantity: ${qty}`);
+        });
+        return;
+      }
+      changeStockStatus(sel.dataset.id, newStatusId);
+    });
   });
   tbody.querySelectorAll('[data-history]').forEach(btn => {
     btn.addEventListener('click', () => showHistory(btn.dataset.history));
@@ -659,6 +902,38 @@ function renderStock() {
         save(); renderStock(); renderDashboard();
         showToast('Stock entry deleted');
       }
+    });
+  });
+}
+
+/* Stock quantity isn't collected when an item is first logged in --
+   it's only known for sure once verification is done, so it's asked
+   for at that specific transition instead (see openStockForm and the
+   .status-select handler in renderStock). Unit is always "No of Packages". */
+function isVerificationDoneStatus(statusId) {
+  const s = statusById(statusId);
+  return !!s && s.name.trim().toLowerCase() === 'verification done';
+}
+function promptStockVerificationQuantity(existingQuantity, onConfirm) {
+  openModal('Verification done — enter quantity', `
+    <form id="verifyQtyForm">
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" id="f-verifyQty" min="0" step="any" required value="${existingQuantity != null ? existingQuantity : ''}">
+      </div>
+      <div class="form-actions">
+        <button type="button" class="secondary-btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="primary-btn">Confirm</button>
+      </div>
+    </form>
+  `, body => {
+    body.querySelector('#cancelBtn').addEventListener('click', closeModal);
+    body.querySelector('#verifyQtyForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const qty = document.getElementById('f-verifyQty').value;
+      if (qty === '') return;
+      closeModal();
+      onConfirm(qty);
     });
   });
 }
@@ -689,8 +964,9 @@ function showHistory(itemId) {
     </li>`;
   }).join('');
   historyBody.innerHTML = `
-    <p style="margin-top:0"><strong>${escapeHtml(item.serialNumber || '—')}</strong> · ${escapeHtml(category ? category.name : 'Uncategorized')} — ${escapeHtml(item.quantity)} ${escapeHtml(item.unit || '')}</p>
+    <p style="margin-top:0"><strong>${escapeHtml(item.serialNumber || '—')}</strong> · ${escapeHtml(category ? category.name : 'Uncategorized')} — ${stockQuantityLabel(item)}</p>
     <p style="margin-top:-8px;color:var(--text-muted);font-size:12.5px">
+      No of Packages: ${packagesCountLabel(item)}<br>
       Dealer: ${escapeHtml(dealerLabel(item))}<br>
       Delivered by: ${escapeHtml(item.deliveryPerson || '—')} &nbsp;·&nbsp; Received by: ${escapeHtml(item.receiverName || '—')}
     </p>
@@ -738,16 +1014,16 @@ function openStockForm(editId) {
         <label>Product category</label>
         <select id="f-category" required>${categoryOptionsHtml(item ? item.categoryId : null)}</select>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Stock quantity</label>
-          <input type="number" id="f-quantity" min="0" step="any" required value="${item ? item.quantity : ''}">
-        </div>
-        <div class="form-group">
-          <label>Unit (optional)</label>
-          <input type="text" id="f-unit" placeholder="pcs, boxes, kg..." value="${item ? escapeHtml(item.unit || '') : ''}">
-        </div>
+      <div class="form-group">
+        <label>No of Packages</label>
+        <input type="number" id="f-packagesCount" min="0" step="1" required value="${item && item.packagesCount != null ? item.packagesCount : ''}">
       </div>
+      ${item ? `
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" id="f-quantity" min="0" step="any" value="${item.quantity != null ? item.quantity : ''}">
+      </div>` : `
+      <p class="hint" style="margin-top:-4px">Quantity is entered once verification is done, not when first logging the item in.</p>`}
       <div class="form-group">
         <label>Dealer</label>
         <select id="f-dealer" required>${dealerOptionsHtml(matchingDealer ? matchingDealer.id : null)}</select>
@@ -785,29 +1061,48 @@ function openStockForm(editId) {
     body.querySelector('#stockForm').addEventListener('submit', e => {
       e.preventDefault();
       const categoryId = document.getElementById('f-category').value;
-      const quantity = document.getElementById('f-quantity').value;
-      const unit = document.getElementById('f-unit').value.trim();
       const dealerId = document.getElementById('f-dealer').value;
+      const packagesCountRaw = document.getElementById('f-packagesCount').value;
       const deliveryPerson = document.getElementById('f-deliveryPerson').value.trim();
       const receiverName = document.getElementById('f-receiverName').value.trim();
       const receivedDate = document.getElementById('f-receivedDate').value;
       const notes = document.getElementById('f-notes').value.trim();
-      if (!categoryId || !quantity || !dealerId || !receivedDate) return;
+      if (!categoryId || !dealerId || !receivedDate || packagesCountRaw === '') return;
 
       if (item) {
-        item.categoryId = categoryId; item.quantity = quantity; item.unit = unit;
+        const quantityRaw = document.getElementById('f-quantity').value;
+        item.categoryId = categoryId; item.quantity = quantityRaw === '' ? null : quantityRaw;
+        item.packagesCount = packagesCountRaw;
         item.dealerId = dealerId; item.deliveryPerson = deliveryPerson; item.receiverName = receiverName;
         item.receivedDate = receivedDate; item.notes = notes;
-      } else {
-        const statusId = document.getElementById('f-status').value;
-        state.stockItems.push({
-          id: uid(), serialNumber: nextStockSerial(state), categoryId, quantity, unit, dealerId, deliveryPerson, receiverName,
-          receivedDate, notes, statusId, createdAt: new Date().toISOString(),
-          history: [{ statusId, note: 'Logged into system', at: new Date().toISOString() }]
-        });
+        save(); closeModal(); renderStock(); renderDashboard();
+        showToast('Stock entry updated');
+        return;
       }
-      save(); closeModal(); renderStock(); renderDashboard();
-      showToast(item ? 'Stock entry updated' : `Stock entry added — ${state.stockItems[state.stockItems.length - 1].serialNumber}`);
+
+      const statusId = document.getElementById('f-status').value;
+      const createEntry = quantity => {
+        state.stockItems.push({
+          id: uid(), serialNumber: nextStockSerial(state), categoryId,
+          quantity: quantity != null ? quantity : null, packagesCount: packagesCountRaw,
+          dealerId, deliveryPerson, receiverName, receivedDate, notes, statusId,
+          createdAt: new Date().toISOString(),
+          history: [{
+            statusId,
+            note: quantity != null ? `Verified quantity: ${quantity}` : 'Logged into system',
+            at: new Date().toISOString()
+          }]
+        });
+        save(); closeModal(); renderStock(); renderDashboard();
+        showToast(`Stock entry added — ${state.stockItems[state.stockItems.length - 1].serialNumber}`);
+      };
+
+      if (isVerificationDoneStatus(statusId)) {
+        closeModal();
+        promptStockVerificationQuantity(null, createEntry);
+      } else {
+        createEntry(null);
+      }
     });
   });
 }
@@ -892,6 +1187,20 @@ function populateTaskFilters() {
   storeSel.value = storeCurrent;
 }
 
+/* Task status is a 3-state value: pending -> partial -> completed.
+   Shared here so the main Tasks table, task report, and anywhere else
+   showing a task's status all agree on label/color. */
+const TASK_STATUS_META = {
+  pending: { cls: 'badge-pending', label: 'Pending' },
+  partial: { cls: 'badge-transit', label: 'Partially Completed' },
+  completed: { cls: 'badge-completed', label: 'Completed' }
+};
+function taskStatusMeta(status) { return TASK_STATUS_META[status] || TASK_STATUS_META.pending; }
+function taskStatusBadgeHtml(status) {
+  const m = taskStatusMeta(status);
+  return `<span class="badge ${m.cls}">${escapeHtml(m.label)}</span>`;
+}
+
 function renderTasks() {
   if (!document.getElementById('taskDate').value) document.getElementById('taskDate').value = todayStr();
   populateTaskFilters();
@@ -906,21 +1215,32 @@ function renderTasks() {
   if (statusFilter) tasks = tasks.filter(t => t.status === statusFilter);
   tasks.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
 
+  const today = todayStr();
   const tbody = document.getElementById('taskTableBody');
   tbody.innerHTML = tasks.map(task => {
     const person = staffById(task.staffId);
     const storeNames = (task.storeIds || []).map(id => storeById(id)).filter(Boolean).map(s => s.name);
     const subtitleParts = [storeNames.length ? storeNames.join(', ') : null, task.description || null].filter(Boolean).join(' · ');
+    // Once a task's own day has passed, its status is frozen entirely --
+    // no change in any direction (Pending/Partially Completed/Completed)
+    // -- unless the user's role grants the "Complete Tasks After Due
+    // Date" override (see Roles & Users).
+    const status = task.status || 'pending';
+    const locked = task.date < today && !canEdit('tasksLateComplete');
+    const meta = taskStatusMeta(status);
     return `
       <tr>
         <td><strong>${escapeHtml(task.title)}</strong>${subtitleParts ? `<div style="color:var(--text-muted);font-size:11.5px;margin-top:2px">${escapeHtml(subtitleParts)}</div>` : ''}</td>
         <td>${escapeHtml(person ? staffLabel(person) : 'Unassigned')}</td>
         <td>${fmtDate(task.date)}</td>
         <td>
-          <label class="badge ${task.status === 'completed' ? 'badge-completed' : 'badge-pending'}" style="cursor:pointer">
-            <input type="checkbox" data-toggle="${task.id}" ${task.status === 'completed' ? 'checked' : ''} style="margin:0">
-            ${task.status === 'completed' ? 'Completed' : 'Pending'}
-          </label>
+          <select class="badge task-status-select ${meta.cls}" data-id="${task.id}"
+            style="border:none;appearance:none;-webkit-appearance:none;padding-right:22px;cursor:${locked ? 'not-allowed' : 'pointer'}"
+            ${locked ? 'disabled' : ''} ${locked ? "title=\"Overdue — status can't be changed after the due date without permission\"" : ''}>
+            <option value="pending" ${status === 'pending' ? 'selected' : ''}>${locked && status === 'pending' ? 'Missed' : 'Pending'}</option>
+            <option value="partial" ${status === 'partial' ? 'selected' : ''}>Partially Completed</option>
+            <option value="completed" ${status === 'completed' ? 'selected' : ''}>Completed</option>
+          </select>
         </td>
         <td class="row-actions">
           <button class="link-btn" data-edit-task="${task.id}">Edit</button>
@@ -931,11 +1251,17 @@ function renderTasks() {
 
   document.getElementById('taskEmpty').hidden = tasks.length !== 0;
 
-  tbody.querySelectorAll('[data-toggle]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const task = state.tasks.find(t => t.id === cb.dataset.toggle);
-      task.status = cb.checked ? 'completed' : 'pending';
-      task.completedAt = cb.checked ? new Date().toISOString() : null;
+  tbody.querySelectorAll('.task-status-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const task = state.tasks.find(t => t.id === sel.dataset.id);
+      const prevStatus = task.status || 'pending';
+      if (task.date < todayStr() && !canEdit('tasksLateComplete')) {
+        sel.value = prevStatus;
+        showToast("Can't change status — this task's due date has passed");
+        return;
+      }
+      task.status = sel.value;
+      task.completedAt = sel.value === 'completed' ? new Date().toISOString() : null;
       save(); renderTasks(); renderDashboard();
     });
   });
@@ -1277,8 +1603,8 @@ function renderDeliveries() {
     if (deliveryTab === 'delayed') return delayed;
     return !delivered && !delayed;
   });
-  if (staffFilter === '__unassigned__') deliveries = deliveries.filter(d => !d.staffId);
-  else if (staffFilter) deliveries = deliveries.filter(d => d.staffId === staffFilter);
+  if (staffFilter === '__unassigned__') deliveries = deliveries.filter(d => !d.staffIds || d.staffIds.length === 0);
+  else if (staffFilter) deliveries = deliveries.filter(d => (d.staffIds || []).includes(staffFilter));
   if (storeFilter) deliveries = deliveries.filter(d => d.storeId === storeFilter);
   if (statusFilter) deliveries = deliveries.filter(d => d.status === statusFilter);
 
@@ -1288,7 +1614,7 @@ function renderDeliveries() {
 
   const tbody = document.getElementById('deliveryTableBody');
   tbody.innerHTML = deliveries.map(delivery => {
-    const person = deliveryPersonById(delivery.staffId);
+    const staffNames = deliveryStaffLabel(delivery);
     const store = storeById(delivery.storeId);
     const stockItem = delivery.stockItemId ? state.stockItems.find(i => i.id === delivery.stockItemId) : null;
     const subtitleParts = [stockItem ? stockItemLabel(stockItem) : null, delivery.notes || null].filter(Boolean).join(' · ');
@@ -1296,12 +1622,12 @@ function renderDeliveries() {
     const delayed = isDeliveryDelayed(delivery);
     return `
       <tr${delayed ? ' style="background:var(--red-soft)"' : ''}>
+        <td><strong>${escapeHtml(delivery.deliveryId || '—')}</strong></td>
         <td><strong>${escapeHtml(store ? store.name : 'Unknown store')}</strong>${subtitleParts ? `<div style="color:var(--text-muted);font-size:11.5px;margin-top:2px">${escapeHtml(subtitleParts)}</div>` : ''}</td>
-        <td>${escapeHtml(delivery.transferId || '—')}</td>
-        <td>${escapeHtml(delivery.box || '—')}</td>
+        <td>${escapeHtml(deliveryTransferIdsLabel(delivery) || '—')}</td>
         <td>${escapeHtml(delivery.packages)}</td>
-        <td>${person
-          ? escapeHtml(deliveryPersonLabel(person))
+        <td>${staffNames
+          ? `${escapeHtml(staffNames)} <button class="link-btn" data-assign-delivery="${delivery.id}">Edit</button>`
           : `<span class="badge badge-pending">Unassigned</span> <button class="link-btn" data-assign-delivery="${delivery.id}">Assign</button>`}</td>
         <td>${fmtDate(delivery.date)}</td>
         <td style="${delayed ? 'color:var(--red);font-weight:600' : ''}">${days}d</td>
@@ -1311,6 +1637,7 @@ function renderDeliveries() {
           </select>
         </td>
         <td class="row-actions">
+          <button class="link-btn" data-print-delivery="${delivery.id}">Print</button>
           <button class="link-btn" data-edit-delivery="${delivery.id}">Edit</button>
           <button class="danger-btn" data-del-delivery="${delivery.id}">Delete</button>
         </td>
@@ -1338,6 +1665,9 @@ function renderDeliveries() {
   tbody.querySelectorAll('[data-assign-delivery]').forEach(btn => {
     btn.addEventListener('click', () => openAssignDeliveryPersonForm(btn.dataset.assignDelivery));
   });
+  tbody.querySelectorAll('[data-print-delivery]').forEach(btn => {
+    btn.addEventListener('click', () => printDeliverySlip(btn.dataset.printDelivery));
+  });
   tbody.querySelectorAll('[data-edit-delivery]').forEach(btn => {
     btn.addEventListener('click', () => openDeliveryForm(btn.dataset.editDelivery));
   });
@@ -1356,12 +1686,6 @@ document.getElementById('addDeliveryBtn').addEventListener('click', () => openCr
 
 function storeOptionsHtml(selectedId) {
   return state.stores.map(s => `<option value="${s.id}" ${selectedId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
-}
-
-function stockItemOptionsHtml(selectedId) {
-  const sorted = [...state.stockItems].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-  return '<option value="">-- No linked stock --</option>' +
-    sorted.map(i => `<option value="${i.id}" ${selectedId === i.id ? 'selected' : ''}>${escapeHtml(stockItemLabel(i))}</option>`).join('');
 }
 
 /* Create deliveries WITHOUT a delivery person yet -- store/stock/item/box/packages
@@ -1397,32 +1721,23 @@ function openCreateDeliveryForm() {
       row.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;position:relative';
       row.innerHTML = `
         <button type="button" class="icon-btn row-remove" style="position:absolute;top:6px;right:8px;font-size:16px">&times;</button>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Store</label>
-            <select class="row-store">${storeOptionsHtml()}</select>
-          </div>
-          <div class="form-group">
-            <label>Linked stock (optional)</label>
-            <select class="row-stock">${stockItemOptionsHtml()}</select>
-          </div>
+        <div class="form-group">
+          <label>Store</label>
+          <select class="row-store">${storeOptionsHtml()}</select>
         </div>
         <div class="form-group" style="margin-bottom:8px">
-          <label>Transfer ID</label>
-          <input type="number" class="row-transfer-id" min="0" step="1" placeholder="e.g. 1024">
+          <label>Transfer ID(s)</label>
+          <div class="row-transfer-slot"></div>
         </div>
-        <div class="form-row" style="margin-bottom:0">
-          <div class="form-group">
-            <label>Box</label>
-            <input type="number" class="row-box" min="0" step="1" placeholder="e.g. 2">
-          </div>
-          <div class="form-group">
-            <label>Packages</label>
-            <input type="number" class="row-packages" min="1" step="1" placeholder="e.g. 5">
-          </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label>Packages</label>
+          <input type="number" class="row-packages" min="1" step="1" placeholder="e.g. 5">
         </div>
       `;
       rowsContainer.appendChild(row);
+      const transferInput = buildTagInput([], 'e.g. 1024');
+      row.querySelector('.row-transfer-slot').appendChild(transferInput.el);
+      row.transferInput = transferInput;
       row.querySelector('.row-remove').addEventListener('click', () => {
         if (rowsContainer.children.length > 1) row.remove();
       });
@@ -1443,11 +1758,9 @@ function openCreateDeliveryForm() {
         const storeId = row.querySelector('.row-store').value;
         const packages = row.querySelector('.row-packages').value;
         if (!storeId || !packages) return;
-        const stockItemId = row.querySelector('.row-stock').value || null;
-        const transferId = row.querySelector('.row-transfer-id').value.trim();
-        const box = row.querySelector('.row-box').value;
+        const transferIds = row.transferInput.getValues();
         newDeliveries.push({
-          id: uid(), staffId: null, storeId, stockItemId, transferId, box, packages, date, notes: '',
+          id: uid(), deliveryId: nextDeliverySerial(state), staffIds: [], storeId, stockItemId: null, transferIds, packages, date, notes: '',
           status: 'pending', createdAt: new Date().toISOString(), deliveredAt: null
         });
       });
@@ -1474,14 +1787,13 @@ function openAssignDeliveryPersonForm(deliveryId) {
     return;
   }
   const store = storeById(delivery.storeId);
-  const staffOptions = activeDeliveryStaff.map(s => `<option value="${s.id}">${escapeHtml(deliveryPersonLabel(s))}</option>`).join('');
 
-  openModal('Assign delivery person', `
+  openModal('Assign delivery staff', `
     <form id="assignPersonForm">
       <p class="hint" style="margin-top:0">${escapeHtml(store ? store.name : 'Unknown store')} — ${escapeHtml(delivery.packages)} package(s) on ${fmtDate(delivery.date)}</p>
       <div class="form-group">
-        <label>Delivery staff</label>
-        <select id="f-assignStaff" required>${staffOptions}</select>
+        <label>Delivery staff (choose one or more)</label>
+        <div id="f-assignStaffSlot"></div>
       </div>
       <div class="form-actions">
         <button type="button" class="secondary-btn" id="cancelBtn">Cancel</button>
@@ -1489,15 +1801,17 @@ function openAssignDeliveryPersonForm(deliveryId) {
       </div>
     </form>
   `, body => {
+    const staffMs = buildDeliveryStaffMultiSelect(delivery.staffIds || []);
+    body.querySelector('#f-assignStaffSlot').appendChild(staffMs.el);
     body.querySelector('#cancelBtn').addEventListener('click', closeModal);
     body.querySelector('#assignPersonForm').addEventListener('submit', e => {
       e.preventDefault();
-      const staffId = document.getElementById('f-assignStaff').value;
-      if (!staffId) return;
-      delivery.staffId = staffId;
+      const staffIds = staffMs.getSelected();
+      if (staffIds.length === 0) { showToast('Choose at least one delivery staff member'); return; }
+      delivery.staffIds = staffIds;
       if (delivery.status === 'pending') delivery.status = 'in_transit';
       save(); closeModal(); renderDeliveries(); renderDashboard();
-      showToast(`Assigned to ${deliveryPersonLabel(deliveryPersonById(staffId))} — moved to In Transit`);
+      showToast(`Assigned to ${staffIds.map(id => deliveryPersonLabel(deliveryPersonById(id))).join(', ')} — moved to In Transit`);
     });
   });
 }
@@ -1505,39 +1819,28 @@ function openAssignDeliveryPersonForm(deliveryId) {
 function openDeliveryForm(editId) {
   const delivery = state.deliveries.find(d => d.id === editId);
   if (!delivery) return;
-  const activeDeliveryStaff = state.deliveryStaff.filter(s => s.active !== false);
-  const staffOptions = '<option value="">-- Unassigned --</option>' +
-    activeDeliveryStaff.map(s => `<option value="${s.id}" ${delivery.staffId === s.id ? 'selected' : ''}>${escapeHtml(deliveryPersonLabel(s))}</option>`).join('');
 
   openModal('Edit delivery', `
     <form id="deliveryForm">
-      <div class="form-row">
-        <div class="form-group">
-          <label>Store</label>
-          <select id="f-deliveryStore" required>${storeOptionsHtml(delivery.storeId)}</select>
-        </div>
-        <div class="form-group">
-          <label>Linked stock (optional)</label>
-          <select id="f-deliveryStock">${stockItemOptionsHtml(delivery.stockItemId)}</select>
-        </div>
+      <div class="form-group">
+        <label>Delivery ID</label>
+        <input type="text" value="${escapeHtml(delivery.deliveryId || '—')}" disabled style="background:#f4f6f8;color:var(--text-muted)">
       </div>
       <div class="form-group">
-        <label>Transfer ID</label>
-        <input type="number" id="f-deliveryTransferId" min="0" step="1" value="${escapeHtml(delivery.transferId || '')}">
+        <label>Store</label>
+        <select id="f-deliveryStore" required>${storeOptionsHtml(delivery.storeId)}</select>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Box</label>
-          <input type="number" id="f-deliveryBox" min="0" step="1" value="${delivery.box || ''}">
-        </div>
-        <div class="form-group">
-          <label>Number of packages</label>
-          <input type="number" id="f-packages" min="1" step="1" required value="${delivery.packages}">
-        </div>
+      <div class="form-group">
+        <label>Transfer ID(s)</label>
+        <div id="f-deliveryTransferSlot"></div>
+      </div>
+      <div class="form-group">
+        <label>Number of packages</label>
+        <input type="number" id="f-packages" min="1" step="1" required value="${delivery.packages}">
       </div>
       <div class="form-group">
         <label>Delivery staff</label>
-        <select id="f-deliveryStaff">${staffOptions}</select>
+        <div id="f-deliveryStaffSlot"></div>
       </div>
       <div class="form-group">
         <label>Date</label>
@@ -1553,30 +1856,53 @@ function openDeliveryForm(editId) {
       </div>
     </form>
   `, body => {
+    const staffMs = buildDeliveryStaffMultiSelect(delivery.staffIds || []);
+    body.querySelector('#f-deliveryStaffSlot').appendChild(staffMs.el);
+    const transferInput = buildTagInput(delivery.transferIds || [], 'e.g. 1024');
+    body.querySelector('#f-deliveryTransferSlot').appendChild(transferInput.el);
     body.querySelector('#cancelBtn').addEventListener('click', closeModal);
     body.querySelector('#deliveryForm').addEventListener('submit', e => {
       e.preventDefault();
       const storeId = document.getElementById('f-deliveryStore').value;
-      const stockItemId = document.getElementById('f-deliveryStock').value || null;
-      const transferId = document.getElementById('f-deliveryTransferId').value.trim();
-      const box = document.getElementById('f-deliveryBox').value;
+      const transferIds = transferInput.getValues();
       const packages = document.getElementById('f-packages').value;
-      const staffId = document.getElementById('f-deliveryStaff').value || null;
+      const staffIds = staffMs.getSelected();
       const date = document.getElementById('f-deliveryDate').value;
       const notes = document.getElementById('f-deliveryNotes').value.trim();
       if (!storeId || !packages || !date) return;
 
-      const wasAssigned = !!delivery.staffId;
-      if (staffId && !wasAssigned && delivery.status === 'pending') delivery.status = 'in_transit';
-      if (!staffId && wasAssigned && delivery.status === 'in_transit') delivery.status = 'pending';
+      const wasAssigned = (delivery.staffIds || []).length > 0;
+      const nowAssigned = staffIds.length > 0;
+      if (nowAssigned && !wasAssigned && delivery.status === 'pending') delivery.status = 'in_transit';
+      if (!nowAssigned && wasAssigned && delivery.status === 'in_transit') delivery.status = 'pending';
 
-      delivery.storeId = storeId; delivery.stockItemId = stockItemId; delivery.transferId = transferId; delivery.box = box;
-      delivery.packages = packages; delivery.staffId = staffId; delivery.date = date; delivery.notes = notes;
+      delivery.storeId = storeId; delivery.transferIds = transferIds;
+      delivery.packages = packages; delivery.staffIds = staffIds; delivery.date = date; delivery.notes = notes;
 
       save(); closeModal(); renderDeliveries(); renderDashboard();
       showToast('Delivery updated');
     });
   });
+}
+
+/* Prints an 80mm thermal-printer slip for one delivery via the hidden
+   #printSlip element (see the @media print rule in style.css, which
+   hides everything else on the page and shows only this). */
+function printDeliverySlip(deliveryId) {
+  const delivery = state.deliveries.find(d => d.id === deliveryId);
+  if (!delivery) return;
+  const store = storeById(delivery.storeId);
+  document.getElementById('printSlip').innerHTML = `
+    <div style="text-align:center;font-weight:bold;font-size:14px;margin-bottom:6px">TechB Warehouse</div>
+    <div style="text-align:center;margin-bottom:8px">Delivery Slip</div>
+    <div>Delivery ID: ${escapeHtml(delivery.deliveryId || '—')}</div>
+    <div>Date: ${fmtDate(delivery.date)}</div>
+    <div>From: TechB Warehouse</div>
+    <div>To: ${escapeHtml(store ? store.name : 'Unknown store')}</div>
+    <div>Transfer ID(s): ${escapeHtml(deliveryTransferIdsLabel(delivery) || '—')}</div>
+    <div>Packages: ${escapeHtml(delivery.packages)}</div>
+  `;
+  window.print();
 }
 
 /* =========================================================
@@ -1692,7 +2018,7 @@ function renderDeliveryEmployeeReport() {
   const activeDeliveryStaff = state.deliveryStaff.filter(s => s.active !== false);
 
   const rows = activeDeliveryStaff.map(person => {
-    const deliveries = state.deliveries.filter(d => d.staffId === person.id && inReportRange(d.date, from, to));
+    const deliveries = state.deliveries.filter(d => (d.staffIds || []).includes(person.id) && inReportRange(d.date, from, to));
     const done = deliveries.filter(d => d.status === 'delivered').length;
     const packages = deliveries.filter(d => d.status === 'delivered')
       .reduce((sum, d) => sum + (Number(d.packages) || 0), 0);
@@ -1791,7 +2117,8 @@ function renderStockReport() {
         <td><strong>${escapeHtml(item.serialNumber || '—')}</strong>${delayed ? ' <span style="color:var(--red);font-size:11px;font-weight:600">DELAYED</span>' : ''}</td>
         <td>${escapeHtml(category ? category.name : 'Uncategorized')}</td>
         <td>${escapeHtml(dealerLabel(item))}</td>
-        <td>${escapeHtml(item.quantity)} ${escapeHtml(item.unit || '')}</td>
+        <td>${packagesCountLabel(item)}</td>
+        <td>${stockQuantityLabel(item)}</td>
         <td>${fmtDate(item.receivedDate)}</td>
         <td>${escapeHtml(status ? status.name : '—')}</td>
         <td>${progressBarHtml(statusProgressPct(item.statusId))}</td>
@@ -1829,10 +2156,13 @@ function renderTaskReport() {
   tasks = [...tasks].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   const doneCount = tasks.filter(t => t.status === 'completed').length;
+  const partialCount = tasks.filter(t => t.status === 'partial').length;
+  const pendingCount = tasks.length - doneCount - partialCount;
   document.getElementById('taskReportCards').innerHTML = `
     <div class="card"><div class="card-value">${tasks.length}</div><div class="card-label">Total tasks</div></div>
     <div class="card"><div class="card-value">${doneCount}</div><div class="card-label">Completed</div></div>
-    <div class="card"><div class="card-value">${tasks.length - doneCount}</div><div class="card-label">Pending</div></div>
+    <div class="card"><div class="card-value">${partialCount}</div><div class="card-label">Partially completed</div></div>
+    <div class="card"><div class="card-value">${pendingCount}</div><div class="card-label">Pending</div></div>
     <div class="card"><div class="card-value">${tasks.length ? Math.round(doneCount / tasks.length * 100) : 0}%</div><div class="card-label">Completion rate</div></div>
   `;
 
@@ -1846,7 +2176,7 @@ function renderTaskReport() {
         <td>${escapeHtml(person ? staffLabel(person) : 'Unassigned')}</td>
         <td>${escapeHtml(storeNames || '—')}</td>
         <td>${fmtDate(t.date)}</td>
-        <td><span class="badge ${t.status === 'completed' ? 'badge-completed' : 'badge-pending'}">${t.status === 'completed' ? 'Completed' : 'Pending'}</span></td>
+        <td>${taskStatusBadgeHtml(t.status)}</td>
       </tr>`;
   }).join('');
 
@@ -1877,15 +2207,15 @@ function renderDeliveryReport() {
   const transferSearch = document.getElementById('deliveryReportSearchTransfer').value.trim().toLowerCase();
 
   let deliveries = state.deliveries.filter(d => inReportRange(d.date, from, to));
-  if (staffFilter === '__unassigned__') deliveries = deliveries.filter(d => !d.staffId);
-  else if (staffFilter) deliveries = deliveries.filter(d => d.staffId === staffFilter);
+  if (staffFilter === '__unassigned__') deliveries = deliveries.filter(d => !d.staffIds || d.staffIds.length === 0);
+  else if (staffFilter) deliveries = deliveries.filter(d => (d.staffIds || []).includes(staffFilter));
   if (storeFilter) deliveries = deliveries.filter(d => d.storeId === storeFilter);
   if (statusFilter) deliveries = deliveries.filter(d => d.status === statusFilter);
-  if (transferSearch) deliveries = deliveries.filter(d => String(d.transferId || '').toLowerCase().includes(transferSearch));
+  if (transferSearch) deliveries = deliveries.filter(d => deliveryTransferIdsLabel(d).toLowerCase().includes(transferSearch));
   deliveries = [...deliveries].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   const deliveredCount = deliveries.filter(d => d.status === 'delivered').length;
-  const unassignedCount = deliveries.filter(d => !d.staffId).length;
+  const unassignedCount = deliveries.filter(d => !d.staffIds || d.staffIds.length === 0).length;
   const packages = deliveries.reduce((sum, d) => sum + (Number(d.packages) || 0), 0);
   document.getElementById('deliveryReportCards').innerHTML = `
     <div class="card"><div class="card-value">${deliveries.length}</div><div class="card-label">Total deliveries</div></div>
@@ -1897,17 +2227,17 @@ function renderDeliveryReport() {
 
   const tbody = document.getElementById('deliveryReportBody');
   tbody.innerHTML = deliveries.map(d => {
-    const person = deliveryPersonById(d.staffId);
+    const staffNames = deliveryStaffLabel(d);
     const store = storeById(d.storeId);
     const stockItem = d.stockItemId ? state.stockItems.find(i => i.id === d.stockItemId) : null;
     return `
       <tr>
-        <td>${escapeHtml(d.transferId || '—')}</td>
+        <td>${escapeHtml(d.deliveryId || '—')}</td>
+        <td>${escapeHtml(deliveryTransferIdsLabel(d) || '—')}</td>
         <td><strong>${escapeHtml(store ? store.name : 'Unknown store')}</strong></td>
         <td>${escapeHtml(stockItem ? stockItemLabel(stockItem) : '—')}</td>
-        <td>${escapeHtml(d.box || '—')}</td>
         <td>${escapeHtml(d.packages)}</td>
-        <td>${person ? escapeHtml(deliveryPersonLabel(person)) : '<span class="badge badge-pending">Unassigned</span>'}</td>
+        <td>${staffNames ? escapeHtml(staffNames) : '<span class="badge badge-pending">Unassigned</span>'}</td>
         <td>${fmtDate(d.date)}</td>
         <td>${deliveryStatusBadgeHtml(d.status)}</td>
       </tr>`;
@@ -2158,7 +2488,7 @@ function renderDeliveryStaff() {
   });
   tbody.querySelectorAll('[data-del-delivery-staff]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const hasDeliveries = state.deliveries.some(d => d.staffId === btn.dataset.delDeliveryStaff);
+      const hasDeliveries = state.deliveries.some(d => (d.staffIds || []).includes(btn.dataset.delDeliveryStaff));
       if (hasDeliveries) {
         showToast('Cannot delete: this person has deliveries. Deactivate instead.');
         return;
@@ -2329,6 +2659,739 @@ function openDealerForm(editId) {
       }
       save(); closeModal(); renderDealers();
       showToast(dealer ? 'Dealer updated' : 'Dealer added');
+    });
+  });
+}
+
+/* =========================================================
+   LOCAL PURCHASES -- each store's accountant logs their own
+   local service-spare purchases here; a user with an assigned
+   store (currentUser.storeId) only ever sees/adds for that one
+   store, while everyone else (Administrator, Manager, Viewer --
+   "the warehouse") sees every store and can filter across them.
+
+   Dealers here are a SEPARATE list (state.localDealers) from the
+   main warehouse Stock dealers (state.dealers) -- local purchase
+   dealers are the small local vendors each store buys spares
+   from, not the bulk suppliers the central warehouse deals with.
+   Like the item name and brand/model catalogs, dealers are also
+   office-only: store-locked users can pick from the list but the
+   "Manage dealers"/"Manage items"/"Manage brand & model" buttons
+   are hidden for them in renderLocalPurchases().
+   ========================================================= */
+function localPurchaseById(id) { return state.localPurchases.find(p => p.id === id); }
+function localDealerById(id) { return state.localDealers.find(d => d.id === id); }
+function localDealerLabel(item) {
+  const dealer = item.dealerId ? localDealerById(item.dealerId) : null;
+  return dealer ? dealer.name : '—';
+}
+function lpItemCatalogById(id) { return state.lpItemCatalog.find(i => i.id === id); }
+function lpBrandModelById(id) { return state.lpBrandModelCatalog.find(bm => bm.id === id); }
+function lpBrandModelLabel(bm) { return `${bm.brand} — ${bm.model}`; }
+
+/* Reads an uploaded .xlsx/.xls/.csv File (via the vendored SheetJS
+   library, vendor/xlsx.full.min.js) into an array of plain objects
+   keyed by the first row's headers, e.g. [{Brand:"Voltas",Model:"VC-2200"}].
+   Blank rows are dropped. Used for bulk-importing catalogs. */
+async function readSpreadsheetRows(file) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  if (rows.length === 0) return [];
+  const headers = rows[0].map(h => String(h || '').trim());
+  return rows.slice(1)
+    .filter(r => r.some(cell => String(cell ?? '').trim() !== ''))
+    .map(r => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = String(r[i] ?? '').trim(); });
+      return obj;
+    });
+}
+function findColumn(headers, name) {
+  return headers.find(h => h.toLowerCase() === name.toLowerCase());
+}
+function localDealerOptionsHtml(selectedId) {
+  return state.localDealers
+    .map(d => `<option value="${d.id}" ${selectedId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('');
+}
+
+function myStore() {
+  return currentUser && currentUser.storeId ? storeById(currentUser.storeId) : null;
+}
+
+/* Purchase lifecycle: RECEIVED -> CHECKING -> USED / RETURNED.
+   Unlike the generic Stock status list, these four are fixed and drive
+   real behavior (not just cosmetic labels): moving to USED asks for a
+   job card number, moving to RETURNED opens a return form, and both
+   remove the item from on-hand stock (see computeLocalStock()). */
+const LP_STATUSES = [
+  { id: 'RECEIVED', label: 'Received' },
+  { id: 'CHECKING', label: 'Checking' },
+  { id: 'USED', label: 'Used' },
+  { id: 'RETURNED', label: 'Returned' }
+];
+function lpReturnReasonById(id) { return state.lpReturnReasons.find(r => r.id === id); }
+
+function openLocalDealerManager() {
+  openModal('Manage local purchase dealers', `
+    <div class="form-group">
+      <label>Add a new dealer</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="f-newLocalDealerName" placeholder="Dealer name" style="flex:1">
+        <input type="text" id="f-newLocalDealerPhone" placeholder="Phone (optional)" style="flex:1">
+        <button type="button" class="primary-btn" id="addLocalDealerBtn">Add</button>
+      </div>
+    </div>
+    <table class="data-table" style="margin-top:10px">
+      <tbody id="localDealerTableBody"></tbody>
+    </table>
+  `, body => {
+    function renderLocalDealerRows() {
+      const tbody = body.querySelector('#localDealerTableBody');
+      tbody.innerHTML = state.localDealers.map(d => `
+        <tr>
+          <td><strong>${escapeHtml(d.name)}</strong></td>
+          <td>${escapeHtml(d.phone || '—')}</td>
+          <td class="row-actions">
+            <button class="link-btn" data-rename-ld="${d.id}">Edit</button>
+            <button class="danger-btn" data-del-ld="${d.id}">Delete</button>
+          </td>
+        </tr>
+      `).join('') || `<tr><td colspan="3"><div class="empty-state">No dealers yet. Add one above.</div></td></tr>`;
+
+      tbody.querySelectorAll('[data-rename-ld]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const dealer = localDealerById(btn.dataset.renameLd);
+          const name = prompt('Dealer name', dealer.name);
+          if (!name || !name.trim()) return;
+          const phone = prompt('Phone (optional)', dealer.phone || '') || '';
+          dealer.name = name.trim(); dealer.phone = phone.trim();
+          save(); renderLocalDealerRows(); renderLocalPurchases();
+        });
+      });
+      tbody.querySelectorAll('[data-del-ld]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const inUse = state.localPurchases.some(p => p.dealerId === btn.dataset.delLd);
+          if (inUse) { showToast('Cannot delete: dealer is used by a purchase entry.'); return; }
+          if (confirm('Delete this dealer?')) {
+            state.localDealers = state.localDealers.filter(d => d.id !== btn.dataset.delLd);
+            save(); renderLocalDealerRows(); renderLocalPurchases();
+          }
+        });
+      });
+    }
+    body.querySelector('#addLocalDealerBtn').addEventListener('click', () => {
+      const nameInput = body.querySelector('#f-newLocalDealerName');
+      const phoneInput = body.querySelector('#f-newLocalDealerPhone');
+      const name = nameInput.value.trim();
+      const phone = phoneInput.value.trim();
+      if (!name) return;
+      if (state.localDealers.some(d => d.name.toLowerCase() === name.toLowerCase())) {
+        showToast('That dealer already exists');
+        return;
+      }
+      state.localDealers.push({ id: uid(), name, phone });
+      save(); nameInput.value = ''; phoneInput.value = ''; renderLocalDealerRows(); renderLocalPurchases();
+    });
+    renderLocalDealerRows();
+  });
+}
+
+document.getElementById('manageLocalDealersBtn').addEventListener('click', openLocalDealerManager);
+
+/* Item name catalog and brand/model catalog for Local Purchases --
+   maintained by office (warehouse-level users, no assigned store);
+   store accountants can only pick from these, never type free text,
+   so item names stay consistent across all 8 stores. Management UI
+   is hidden from store-locked users in renderLocalPurchases(). */
+function openLpItemCatalogManager() {
+  openModal('Manage item names', `
+    <div class="form-group">
+      <label>Add a new item name</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="f-newLpItem" placeholder="e.g. AC Compressor" style="flex:1">
+        <button type="button" class="primary-btn" id="addLpItemBtn">Add</button>
+      </div>
+    </div>
+    <table class="data-table" style="margin-top:10px">
+      <tbody id="lpItemCatalogTableBody"></tbody>
+    </table>
+  `, body => {
+    function renderRows() {
+      const tbody = body.querySelector('#lpItemCatalogTableBody');
+      tbody.innerHTML = state.lpItemCatalog.map(it => `
+        <tr>
+          <td>${escapeHtml(it.name)}</td>
+          <td class="row-actions">
+            <button class="link-btn" data-rename-lpi="${it.id}">Rename</button>
+            <button class="danger-btn" data-del-lpi="${it.id}">Delete</button>
+          </td>
+        </tr>
+      `).join('') || `<tr><td><div class="empty-state">No item names yet. Add one above.</div></td></tr>`;
+
+      tbody.querySelectorAll('[data-rename-lpi]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const entry = lpItemCatalogById(btn.dataset.renameLpi);
+          const name = prompt('Item name', entry.name);
+          if (name && name.trim()) { entry.name = name.trim(); save(); renderRows(); renderLocalPurchases(); }
+        });
+      });
+      tbody.querySelectorAll('[data-del-lpi]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const inUse = state.localPurchases.some(p => p.itemId === btn.dataset.delLpi);
+          if (inUse) { showToast('Cannot delete: item is used by a purchase entry.'); return; }
+          if (confirm('Delete this item name?')) {
+            state.lpItemCatalog = state.lpItemCatalog.filter(it => it.id !== btn.dataset.delLpi);
+            save(); renderRows(); renderLocalPurchases();
+          }
+        });
+      });
+    }
+    body.querySelector('#addLpItemBtn').addEventListener('click', () => {
+      const input = body.querySelector('#f-newLpItem');
+      const name = input.value.trim();
+      if (!name) return;
+      if (state.lpItemCatalog.some(it => it.name.toLowerCase() === name.toLowerCase())) {
+        showToast('That item name already exists');
+        return;
+      }
+      state.lpItemCatalog.push({ id: uid(), name });
+      save(); input.value = ''; renderRows(); renderLocalPurchases();
+    });
+    renderRows();
+  });
+}
+document.getElementById('manageLpItemsBtn').addEventListener('click', openLpItemCatalogManager);
+
+function openLpBrandModelCatalogManager() {
+  openModal('Manage brand & model', `
+    <div class="form-group">
+      <label>Add a new brand + model</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="f-newLpBrand" placeholder="Brand, e.g. Voltas" style="flex:1">
+        <input type="text" id="f-newLpModel" placeholder="Model, e.g. VC-2200" style="flex:1">
+        <button type="button" class="primary-btn" id="addLpBrandModelBtn">Add</button>
+      </div>
+    </div>
+    <div class="form-group" style="border-top:1px solid var(--border);padding-top:14px">
+      <label>Or bulk upload from Excel / CSV</label>
+      <input type="file" id="f-lpBrandModelFile" accept=".xlsx,.xls,.csv">
+      <p class="hint" style="margin:6px 0 0">
+        First row must be column headers, with a <strong>Brand</strong> column and a <strong>Model</strong> column
+        (any order, other columns are ignored). Rows already in the list below are skipped automatically.
+      </p>
+    </div>
+    <table class="data-table" style="margin-top:10px">
+      <tbody id="lpBrandModelTableBody"></tbody>
+    </table>
+  `, body => {
+    body.querySelector('#f-lpBrandModelFile').addEventListener('change', async e => {
+      const file = e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      try {
+        const rows = await readSpreadsheetRows(file);
+        if (rows.length === 0) { showToast('That file has no data rows'); return; }
+        const headers = Object.keys(rows[0]);
+        const brandKey = findColumn(headers, 'Brand');
+        const modelKey = findColumn(headers, 'Model');
+        if (!brandKey || !modelKey) { showToast('Could not find "Brand" and "Model" columns in that file'); return; }
+
+        let added = 0, skipped = 0;
+        rows.forEach(r => {
+          const brand = (r[brandKey] || '').trim();
+          const model = (r[modelKey] || '').trim();
+          if (!brand || !model) { skipped++; return; }
+          const exists = state.lpBrandModelCatalog.some(bm =>
+            bm.brand.toLowerCase() === brand.toLowerCase() && bm.model.toLowerCase() === model.toLowerCase());
+          if (exists) { skipped++; return; }
+          state.lpBrandModelCatalog.push({ id: uid(), brand, model });
+          added++;
+        });
+
+        if (added > 0) save();
+        renderRows(); renderLocalPurchases();
+        showToast(`${added} added${skipped ? `, ${skipped} skipped (blank or already in the list)` : ''}`);
+      } catch (err) {
+        showToast('Could not read that file — check it\'s a valid Excel or CSV file');
+      }
+    });
+
+    function renderRows() {
+      const tbody = body.querySelector('#lpBrandModelTableBody');
+      tbody.innerHTML = state.lpBrandModelCatalog.map(bm => `
+        <tr>
+          <td><strong>${escapeHtml(bm.brand)}</strong></td>
+          <td>${escapeHtml(bm.model)}</td>
+          <td class="row-actions">
+            <button class="link-btn" data-rename-lpbm="${bm.id}">Edit</button>
+            <button class="danger-btn" data-del-lpbm="${bm.id}">Delete</button>
+          </td>
+        </tr>
+      `).join('') || `<tr><td colspan="3"><div class="empty-state">No brand/model entries yet. Add one above.</div></td></tr>`;
+
+      tbody.querySelectorAll('[data-rename-lpbm]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const entry = lpBrandModelById(btn.dataset.renameLpbm);
+          const brand = prompt('Brand', entry.brand);
+          if (!brand || !brand.trim()) return;
+          const model = prompt('Model', entry.model);
+          if (!model || !model.trim()) return;
+          entry.brand = brand.trim(); entry.model = model.trim();
+          save(); renderRows(); renderLocalPurchases();
+        });
+      });
+      tbody.querySelectorAll('[data-del-lpbm]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const inUse = state.localPurchases.some(p => p.brandModelId === btn.dataset.delLpbm);
+          if (inUse) { showToast('Cannot delete: used by a purchase entry.'); return; }
+          if (confirm('Delete this brand/model entry?')) {
+            state.lpBrandModelCatalog = state.lpBrandModelCatalog.filter(bm => bm.id !== btn.dataset.delLpbm);
+            save(); renderRows(); renderLocalPurchases();
+          }
+        });
+      });
+    }
+    body.querySelector('#addLpBrandModelBtn').addEventListener('click', () => {
+      const brandInput = body.querySelector('#f-newLpBrand');
+      const modelInput = body.querySelector('#f-newLpModel');
+      const brand = brandInput.value.trim();
+      const model = modelInput.value.trim();
+      if (!brand || !model) return;
+      if (state.lpBrandModelCatalog.some(bm => bm.brand.toLowerCase() === brand.toLowerCase() && bm.model.toLowerCase() === model.toLowerCase())) {
+        showToast('That brand/model already exists');
+        return;
+      }
+      state.lpBrandModelCatalog.push({ id: uid(), brand, model });
+      save(); brandInput.value = ''; modelInput.value = ''; renderRows(); renderLocalPurchases();
+    });
+    renderRows();
+  });
+}
+document.getElementById('manageLpBrandModelBtn').addEventListener('click', openLpBrandModelCatalogManager);
+
+/* Return reasons -- office-only catalog, picked from a dropdown when a
+   purchase's status is changed to RETURNED (see openLocalPurchaseReturnForm). */
+function openLpReturnReasonManager() {
+  openModal('Manage return reasons', `
+    <div class="form-group">
+      <label>Add a new return reason</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="f-newLpReturnReason" placeholder="e.g. Defective part" style="flex:1">
+        <button type="button" class="primary-btn" id="addLpReturnReasonBtn">Add</button>
+      </div>
+    </div>
+    <table class="data-table" style="margin-top:10px">
+      <tbody id="lpReturnReasonTableBody"></tbody>
+    </table>
+  `, body => {
+    function renderRows() {
+      const tbody = body.querySelector('#lpReturnReasonTableBody');
+      tbody.innerHTML = state.lpReturnReasons.map(r => `
+        <tr>
+          <td>${escapeHtml(r.name)}</td>
+          <td class="row-actions">
+            <button class="link-btn" data-rename-lprr="${r.id}">Rename</button>
+            <button class="danger-btn" data-del-lprr="${r.id}">Delete</button>
+          </td>
+        </tr>
+      `).join('') || `<tr><td><div class="empty-state">No return reasons yet. Add one above.</div></td></tr>`;
+
+      tbody.querySelectorAll('[data-rename-lprr]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const entry = lpReturnReasonById(btn.dataset.renameLprr);
+          const name = prompt('Return reason', entry.name);
+          if (name && name.trim()) { entry.name = name.trim(); save(); renderRows(); renderLocalPurchases(); }
+        });
+      });
+      tbody.querySelectorAll('[data-del-lprr]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const inUse = state.localPurchases.some(p => p.returnReasonId === btn.dataset.delLprr);
+          if (inUse) { showToast('Cannot delete: used by a return record.'); return; }
+          if (confirm('Delete this return reason?')) {
+            state.lpReturnReasons = state.lpReturnReasons.filter(r => r.id !== btn.dataset.delLprr);
+            save(); renderRows(); renderLocalPurchases();
+          }
+        });
+      });
+    }
+    body.querySelector('#addLpReturnReasonBtn').addEventListener('click', () => {
+      const input = body.querySelector('#f-newLpReturnReason');
+      const name = input.value.trim();
+      if (!name) return;
+      if (state.lpReturnReasons.some(r => r.name.toLowerCase() === name.toLowerCase())) {
+        showToast('That reason already exists');
+        return;
+      }
+      state.lpReturnReasons.push({ id: uid(), name });
+      save(); input.value = ''; renderRows(); renderLocalPurchases();
+    });
+    renderRows();
+  });
+}
+document.getElementById('manageLpReturnReasonsBtn').addEventListener('click', openLpReturnReasonManager);
+
+/* Computes current on-hand stock per store+item+brand/model, derived
+   entirely from purchases still in RECEIVED or CHECKING status -- USED
+   and RETURNED purchases are excluded, so stock updates automatically
+   as statuses change. No separate stock storage to keep in sync. */
+function computeLocalStock() {
+  const locked = myStore();
+  const onHand = state.localPurchases.filter(p => (p.status || 'RECEIVED') === 'RECEIVED' || p.status === 'CHECKING');
+  const scoped = locked ? onHand.filter(p => p.storeId === locked.id) : onHand;
+  const groups = new Map();
+  scoped.forEach(p => {
+    const key = `${p.storeId}|${p.itemId}|${p.brandModelId}`;
+    if (!groups.has(key)) {
+      groups.set(key, { storeId: p.storeId, itemName: p.itemName, brand: p.brand, model: p.model, qty: 0 });
+    }
+    groups.get(key).qty += Number(p.quantity) || 0;
+  });
+  return [...groups.values()].filter(g => g.qty > 0).sort((a, b) => a.itemName.localeCompare(b.itemName));
+}
+
+function openLocalStockView() {
+  const rows = computeLocalStock();
+  openModal('Local purchase stock on hand', `
+    <table class="data-table">
+      <thead><tr><th>Store</th><th>Item</th><th>Brand</th><th>Model</th><th>Qty</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td>${escapeHtml((storeById(r.storeId) || {}).name || '—')}</td>
+            <td><strong>${escapeHtml(r.itemName)}</strong></td>
+            <td>${escapeHtml(r.brand || '—')}</td>
+            <td>${escapeHtml(r.model || '—')}</td>
+            <td>${r.qty}</td>
+          </tr>
+        `).join('') || `<tr><td colspan="5"><div class="empty-state">No stock on hand.</div></td></tr>`}
+      </tbody>
+    </table>
+  `, () => {});
+}
+document.getElementById('viewLpStockBtn').addEventListener('click', openLocalStockView);
+
+/* Return form -- opened when a purchase's status select is changed to
+   RETURNED. Dealer defaults to the purchase's own dealer ("same dealer
+   who sold it to us") but stays editable. */
+function openLocalPurchaseReturnForm(purchase) {
+  openModal('Return item', `
+    <form id="lpReturnForm">
+      <div class="form-group">
+        <label>Dealer (who we bought it from)</label>
+        <select id="f-lpReturnDealer" required>${localDealerOptionsHtml(purchase.dealerId)}</select>
+      </div>
+      <div class="form-group">
+        <label>Return date</label>
+        <input type="date" id="f-lpReturnDate" required value="${todayStr()}">
+      </div>
+      <div class="form-group">
+        <label>Reason for return</label>
+        <select id="f-lpReturnReason" required>
+          <option value="">Select reason...</option>
+          ${state.lpReturnReasons.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="secondary-btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="primary-btn">Confirm return</button>
+      </div>
+    </form>
+  `, body => {
+    body.querySelector('#cancelBtn').addEventListener('click', closeModal);
+    body.querySelector('#lpReturnForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const returnDealerId = document.getElementById('f-lpReturnDealer').value;
+      const returnDate = document.getElementById('f-lpReturnDate').value;
+      const returnReasonId = document.getElementById('f-lpReturnReason').value;
+      if (!returnDealerId || !returnDate || !returnReasonId) return;
+      purchase.status = 'RETURNED';
+      purchase.returnDealerId = returnDealerId;
+      purchase.returnDate = returnDate;
+      purchase.returnReasonId = returnReasonId;
+      save(); closeModal(); renderLocalPurchases();
+      showToast('Marked as returned');
+    });
+  });
+}
+
+/* Called on change of a purchase row's status <select>. USED and
+   RETURNED need extra info first, so the select is reverted to its old
+   value immediately and only actually changes once that info is saved
+   (renderLocalPurchases() then rebuilds the row with the real value). */
+function changeLocalPurchaseStatus(id, newStatus, selectEl) {
+  const purchase = localPurchaseById(id);
+  const oldStatus = purchase.status || 'RECEIVED';
+  if (newStatus === oldStatus) return;
+
+  if (newStatus === 'USED') {
+    selectEl.value = oldStatus;
+    const jobCard = prompt('Job card number for this usage', purchase.jobCardNumber || '');
+    if (jobCard === null || !jobCard.trim()) return;
+    purchase.status = 'USED';
+    purchase.jobCardNumber = jobCard.trim();
+    save(); renderLocalPurchases();
+    showToast('Marked as used');
+    return;
+  }
+
+  if (newStatus === 'RETURNED') {
+    selectEl.value = oldStatus;
+    const locked = myStore();
+    if (state.lpReturnReasons.length === 0) {
+      if (locked) { showToast('No return reasons set up yet — ask the office to add some.'); return; }
+      showToast('Add at least one return reason first');
+      openLpReturnReasonManager();
+      return;
+    }
+    openLocalPurchaseReturnForm(purchase);
+    return;
+  }
+
+  purchase.status = newStatus;
+  save(); renderLocalPurchases();
+}
+
+function renderLocalPurchases() {
+  const locked = myStore();
+  const hint = document.getElementById('localPurchaseStoreHint');
+  hint.hidden = !locked;
+  if (locked) hint.textContent = `Showing purchases for ${locked.name} only.`;
+
+  // Item names, brand/model and return reasons are office-maintained
+  // catalogs -- store accountants only ever pick from them, never
+  // manage the lists.
+  document.getElementById('manageLpItemsBtn').hidden = !!locked;
+  document.getElementById('manageLpBrandModelBtn').hidden = !!locked;
+  document.getElementById('manageLocalDealersBtn').hidden = !!locked;
+  document.getElementById('manageLpReturnReasonsBtn').hidden = !!locked;
+
+  const storeSel = document.getElementById('lpFilterStore');
+  const dealerSel = document.getElementById('lpFilterDealer');
+  const storeCurrent = storeSel.value, dealerCurrent = dealerSel.value;
+
+  if (locked) {
+    storeSel.innerHTML = `<option value="${locked.id}">${escapeHtml(locked.name)}</option>`;
+    storeSel.value = locked.id;
+    storeSel.disabled = true;
+  } else {
+    storeSel.innerHTML = '<option value="">All stores</option>' +
+      state.stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    storeSel.disabled = false;
+    storeSel.value = storeCurrent;
+  }
+  dealerSel.innerHTML = '<option value="">All dealers</option>' +
+    state.localDealers.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
+  dealerSel.value = dealerCurrent;
+
+  const storeFilter = locked ? locked.id : storeSel.value;
+  const dealerFilter = dealerSel.value;
+  const from = document.getElementById('lpFilterFrom').value;
+  const to = document.getElementById('lpFilterTo').value;
+  const search = document.getElementById('lpSearch').value.trim().toLowerCase();
+
+  let rows = state.localPurchases.slice();
+  if (storeFilter) rows = rows.filter(p => p.storeId === storeFilter);
+  if (dealerFilter) rows = rows.filter(p => p.dealerId === dealerFilter);
+  if (from) rows = rows.filter(p => p.date >= from);
+  if (to) rows = rows.filter(p => p.date <= to);
+  if (search) {
+    rows = rows.filter(p =>
+      (p.itemName || '').toLowerCase().includes(search) ||
+      (p.brand || '').toLowerCase().includes(search) ||
+      (p.model || '').toLowerCase().includes(search) ||
+      (p.jobCardNumber || '').toLowerCase().includes(search)
+    );
+  }
+  rows.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const tbody = document.getElementById('localPurchaseTableBody');
+  tbody.innerHTML = rows.map(p => {
+    const status = p.status || 'RECEIVED';
+    let returnNote = '';
+    if (status === 'RETURNED') {
+      const dealer = localDealerById(p.returnDealerId);
+      const reason = lpReturnReasonById(p.returnReasonId);
+      returnNote = `<div style="color:var(--text-muted);font-size:11.5px;margin-top:2px">
+        Returned to ${escapeHtml(dealer ? dealer.name : '—')} on ${fmtDate(p.returnDate)} — ${escapeHtml(reason ? reason.name : '—')}
+      </div>`;
+    }
+    return `
+    <tr>
+      <td>${fmtDate(p.date)}</td>
+      <td>${escapeHtml((storeById(p.storeId) || {}).name || '—')}</td>
+      <td><strong>${escapeHtml(p.itemName)}</strong>${returnNote}</td>
+      <td>${escapeHtml(p.brand || '—')}</td>
+      <td>${escapeHtml(p.model || '—')}</td>
+      <td>${escapeHtml(localDealerLabel(p))}</td>
+      <td>${escapeHtml(p.jobCardNumber || '—')}</td>
+      <td>${p.quantity ?? 1}</td>
+      <td>${escapeHtml(p.deliveryPerson || '—')}</td>
+      <td>
+        <select class="lp-status-select" data-id="${p.id}">
+          ${LP_STATUSES.map(s => `<option value="${s.id}" ${s.id === status ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}
+        </select>
+      </td>
+      <td class="row-actions">
+        <button class="link-btn" data-edit-lp="${p.id}">Edit</button>
+        <button class="danger-btn" data-del-lp="${p.id}">Delete</button>
+      </td>
+    </tr>
+  `;
+  }).join('');
+  document.getElementById('localPurchaseEmpty').hidden = rows.length !== 0;
+
+  tbody.querySelectorAll('.lp-status-select').forEach(sel => {
+    sel.addEventListener('change', () => changeLocalPurchaseStatus(sel.dataset.id, sel.value, sel));
+  });
+  tbody.querySelectorAll('[data-edit-lp]').forEach(btn => {
+    btn.addEventListener('click', () => openLocalPurchaseForm(btn.dataset.editLp));
+  });
+  tbody.querySelectorAll('[data-del-lp]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('Delete this purchase entry?')) {
+        state.localPurchases = state.localPurchases.filter(p => p.id !== btn.dataset.delLp);
+        save(); renderLocalPurchases();
+        showToast('Purchase deleted');
+      }
+    });
+  });
+}
+
+['lpFilterStore', 'lpFilterDealer', 'lpFilterFrom', 'lpFilterTo'].forEach(id => {
+  document.getElementById(id).addEventListener('change', renderLocalPurchases);
+});
+document.getElementById('lpSearch').addEventListener('input', renderLocalPurchases);
+
+document.getElementById('addLocalPurchaseBtn').addEventListener('click', () => openLocalPurchaseForm());
+
+function openLocalPurchaseForm(editId) {
+  const purchase = editId ? localPurchaseById(editId) : null;
+  const locked = myStore();
+
+  if (state.localDealers.length === 0) {
+    if (locked) { showToast('No dealers set up yet — ask the office to add some.'); return; }
+    showToast('Add at least one dealer first');
+    openLocalDealerManager();
+    return;
+  }
+  if (state.lpItemCatalog.length === 0) {
+    if (locked) { showToast('No item names set up yet — ask the office to add some.'); return; }
+    showToast('Add at least one item name first');
+    openLpItemCatalogManager();
+    return;
+  }
+  if (state.lpBrandModelCatalog.length === 0) {
+    if (locked) { showToast('No brand/model entries set up yet — ask the office to add some.'); return; }
+    showToast('Add at least one brand/model first');
+    openLpBrandModelCatalogManager();
+    return;
+  }
+
+  const storeFieldHtml = locked
+    ? `<input type="hidden" id="f-lpStore" value="${locked.id}"><input type="text" disabled value="${escapeHtml(locked.name)}">`
+    : `<select id="f-lpStore" required>
+        <option value="">Select store...</option>
+        ${state.stores.map(s => `<option value="${s.id}" ${purchase && purchase.storeId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+      </select>`;
+
+  openModal(purchase ? 'Edit purchase' : 'Add local purchase', `
+    <form id="localPurchaseForm">
+      <div class="form-group">
+        <label>Store</label>
+        ${storeFieldHtml}
+      </div>
+      <div class="form-group">
+        <label>Item name</label>
+        <div id="f-lpItemWrap"></div>
+      </div>
+      <div class="form-group">
+        <label>Brand &amp; Model</label>
+        <div id="f-lpBrandModelWrap"></div>
+      </div>
+      <div class="form-group">
+        <label>Dealer</label>
+        <select id="f-lpDealer" required>${localDealerOptionsHtml(purchase ? purchase.dealerId : null)}</select>
+      </div>
+      <div class="form-group">
+        <label>Job card number</label>
+        <input type="text" id="f-lpJobCard" required value="${purchase ? escapeHtml(purchase.jobCardNumber || '') : ''}">
+      </div>
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" id="f-lpQuantity" min="1" step="1" value="${purchase ? purchase.quantity ?? 1 : 1}">
+      </div>
+      <div class="form-group">
+        <label>Delivery person name</label>
+        <input type="text" id="f-lpDeliveryPerson" required value="${purchase ? escapeHtml(purchase.deliveryPerson || '') : ''}">
+      </div>
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="f-lpDate" required value="${purchase ? purchase.date : todayStr()}">
+      </div>
+      <div class="form-group">
+        <label>Notes (optional)</label>
+        <input type="text" id="f-lpNotes" value="${purchase ? escapeHtml(purchase.notes || '') : ''}">
+      </div>
+      <div class="form-actions">
+        <button type="button" class="secondary-btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="primary-btn">${purchase ? 'Save changes' : 'Add purchase'}</button>
+      </div>
+    </form>
+  `, body => {
+    const itemSelect = buildSearchSelect({
+      items: state.lpItemCatalog,
+      getId: it => it.id,
+      getLabel: it => it.name,
+      initialId: purchase ? purchase.itemId : null,
+      placeholder: 'Search item name...'
+    });
+    body.querySelector('#f-lpItemWrap').appendChild(itemSelect.el);
+
+    const brandModelSelect = buildSearchSelect({
+      items: state.lpBrandModelCatalog,
+      getId: bm => bm.id,
+      getLabel: bm => lpBrandModelLabel(bm),
+      initialId: purchase ? purchase.brandModelId : null,
+      placeholder: 'Search brand / model...'
+    });
+    body.querySelector('#f-lpBrandModelWrap').appendChild(brandModelSelect.el);
+
+    body.querySelector('#cancelBtn').addEventListener('click', closeModal);
+    body.querySelector('#localPurchaseForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const storeId = document.getElementById('f-lpStore').value;
+      const itemId = itemSelect.getValue();
+      const brandModelId = brandModelSelect.getValue();
+      const dealerId = document.getElementById('f-lpDealer').value;
+      const jobCardNumber = document.getElementById('f-lpJobCard').value.trim();
+      const quantity = Number(document.getElementById('f-lpQuantity').value) || 1;
+      const deliveryPerson = document.getElementById('f-lpDeliveryPerson').value.trim();
+      const date = document.getElementById('f-lpDate').value;
+      const notes = document.getElementById('f-lpNotes').value.trim();
+      if (!storeId || !dealerId || !date || !deliveryPerson || !jobCardNumber) return;
+      if (!itemId) { showToast('Pick an item name from the list'); return; }
+      if (!brandModelId) { showToast('Pick a brand & model from the list'); return; }
+
+      const item = lpItemCatalogById(itemId);
+      const brandModel = lpBrandModelById(brandModelId);
+      const fields = {
+        storeId, itemId, itemName: item.name,
+        brandModelId, brand: brandModel.brand, model: brandModel.model,
+        dealerId, jobCardNumber, quantity, deliveryPerson, date, notes
+      };
+
+      if (purchase) {
+        Object.assign(purchase, fields);
+      } else {
+        state.localPurchases.push({
+          id: uid(), ...fields, status: 'RECEIVED',
+          createdBy: currentUser ? currentUser.id : null, createdAt: new Date().toISOString()
+        });
+      }
+      save(); closeModal(); renderLocalPurchases();
+      showToast(purchase ? 'Purchase updated' : 'Purchase added');
     });
   });
 }
@@ -2706,11 +3769,11 @@ async function fetchRoles() {
 
 async function renderUsers() {
   const tbody = document.getElementById('userTableBody');
-  tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">Loading...</div></td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">Loading...</div></td></tr>`;
   try {
     const [usersRes] = await Promise.all([fetch('/api/users'), fetchRoles()]);
     if (usersRes.status === 401) { handleSessionExpired(); return; }
-    if (usersRes.status === 403) { tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">You don't have access to manage users.</div></td></tr>`; return; }
+    if (usersRes.status === 403) { tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">You don't have access to manage users.</div></td></tr>`; return; }
     const data = await usersRes.json();
     const users = data.users || [];
     tbody.innerHTML = users.map(u => `
@@ -2718,13 +3781,14 @@ async function renderUsers() {
         <td><strong>${escapeHtml(u.username)}</strong></td>
         <td>${escapeHtml(u.name || '—')}</td>
         <td>${escapeHtml(u.roleName)}</td>
+        <td>${escapeHtml((storeById(u.storeId) || {}).name || 'All stores')}</td>
         <td><span class="badge ${u.active === false ? 'badge-pending' : 'badge-completed'}">${u.active === false ? 'Inactive' : 'Active'}</span></td>
         <td class="row-actions">
           <button class="link-btn" data-edit-user="${u.id}">Edit</button>
           <button class="link-btn" data-toggle-user="${u.id}" data-currently-active="${u.active !== false}">${u.active === false ? 'Reactivate' : 'Deactivate'}</button>
           <button class="danger-btn" data-del-user="${u.id}">Delete</button>
         </td>
-      </tr>`).join('') || `<tr><td colspan="5"><div class="empty-state">No users yet.</div></td></tr>`;
+      </tr>`).join('') || `<tr><td colspan="6"><div class="empty-state">No users yet.</div></td></tr>`;
 
     tbody.querySelectorAll('[data-edit-user]').forEach(btn => {
       btn.addEventListener('click', () => openUserForm(btn.dataset.editUser, users.find(u => u.id === btn.dataset.editUser)));
@@ -2751,7 +3815,7 @@ async function renderUsers() {
       });
     });
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">Could not load users.</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">Could not load users.</div></td></tr>`;
   }
 }
 
@@ -2784,6 +3848,14 @@ function openUserForm(editId, existingUser) {
         <label>Role</label>
         <select id="f-userRole">${roleOptions}</select>
       </div>
+      <div class="form-group">
+        <label>Assigned store (optional)</label>
+        <select id="f-userStore">
+          <option value="">All stores (warehouse-level access)</option>
+          ${state.stores.map(s => `<option value="${s.id}" ${editId && existingUser.storeId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+        </select>
+        <p class="hint" style="margin:4px 0 0">If set, this user's Local Purchases are limited to this one store. Leave blank for warehouse-wide staff.</p>
+      </div>
       <div class="form-actions">
         <button type="button" class="secondary-btn" id="cancelBtn">Cancel</button>
         <button type="submit" class="primary-btn">${editId ? 'Save changes' : 'Add user'}</button>
@@ -2797,9 +3869,10 @@ function openUserForm(editId, existingUser) {
       const name = document.getElementById('f-userName').value.trim();
       const password = document.getElementById('f-userPassword').value;
       const roleId = document.getElementById('f-userRole').value;
+      const storeId = document.getElementById('f-userStore').value || null;
       if (!username || (!editId && !password)) return;
 
-      const payload = { username, name, roleId };
+      const payload = { username, name, roleId, storeId };
       if (password) payload.password = password;
 
       const res = await fetch(editId ? `/api/users/${editId}` : '/api/users', {

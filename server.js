@@ -25,12 +25,14 @@ const MODULES = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'stock', label: 'Stock Tracking' },
   { id: 'tasks', label: 'Daily Tasks' },
+  { id: 'tasksLateComplete', label: 'Complete Tasks After Due Date' },
   { id: 'deliveries', label: 'Deliveries' },
   { id: 'reports', label: 'Reports' },
   { id: 'staff', label: 'Staff' },
   { id: 'deliveryStaff', label: 'Delivery Staff' },
   { id: 'stores', label: 'Stores' },
   { id: 'dealers', label: 'Dealers' },
+  { id: 'localPurchases', label: 'Local Purchases' },
   { id: 'settings', label: 'Status Settings' },
   { id: 'users', label: 'Users & Roles' }
 ];
@@ -49,6 +51,11 @@ const STATE_FIELD_MODULE = {
   deliveryStaff: 'deliveryStaff',
   stores: 'stores',
   dealers: 'dealers',
+  localPurchases: 'localPurchases',
+  localDealers: 'localPurchases',
+  lpItemCatalog: 'localPurchases',
+  lpBrandModelCatalog: 'localPurchases',
+  lpReturnReasons: 'localPurchases',
   statuses: 'settings'
 };
 
@@ -81,7 +88,7 @@ function verifyPassword(password, salt, hash) {
   return check.length === stored.length && crypto.timingSafeEqual(check, stored);
 }
 function sanitizeUser(u) {
-  return { id: u.id, username: u.username, name: u.name, roleId: u.roleId, active: u.active !== false, createdAt: u.createdAt };
+  return { id: u.id, username: u.username, name: u.name, roleId: u.roleId, storeId: u.storeId || null, active: u.active !== false, createdAt: u.createdAt };
 }
 
 function loadUsers() {
@@ -215,6 +222,7 @@ function defaultState() {
     statuses: [
       { id: uid(), name: 'Received at Warehouse' },
       { id: uid(), name: 'Under Verification' },
+      { id: uid(), name: 'Verification Done' },
       { id: uid(), name: 'Ready for Transfer' },
       { id: uid(), name: 'In Transit to Office' },
       { id: uid(), name: 'Transferred to Office' }
@@ -232,6 +240,11 @@ function defaultState() {
     ].map(name => ({ id: uid(), name })),
     deliveries: [],
     dealers: [],
+    localPurchases: [],
+    localDealers: [],
+    lpItemCatalog: [],
+    lpBrandModelCatalog: [],
+    lpReturnReasons: [],
     stockSerialCounter: 0,
     deliveryStaff: []
   };
@@ -358,7 +371,7 @@ app.get('/api/users', requireAuth, requirePermission('users', 'view'), (req, res
 });
 
 app.post('/api/users', requireAuth, requirePermission('users', 'edit'), (req, res) => {
-  const { username, name, password, roleId } = req.body || {};
+  const { username, name, password, roleId, storeId } = req.body || {};
   if (!username || !password || !roleId) return res.status(400).json({ error: 'missing_fields' });
   const roles = loadRoles();
   if (!roles.some(r => r.id === roleId)) return res.status(400).json({ error: 'invalid_role' });
@@ -367,7 +380,7 @@ app.post('/api/users', requireAuth, requirePermission('users', 'edit'), (req, re
     return res.status(409).json({ error: 'username_taken' });
   }
   const { salt, hash } = hashPassword(password);
-  const user = { id: uid(), username, name: name || username, roleId, salt, hash, active: true, createdAt: new Date().toISOString() };
+  const user = { id: uid(), username, name: name || username, roleId, storeId: storeId || null, salt, hash, active: true, createdAt: new Date().toISOString() };
   users.push(user);
   saveUsers(users);
   res.json({ user: sanitizeUser(user) });
@@ -377,7 +390,7 @@ app.put('/api/users/:id', requireAuth, requirePermission('users', 'edit'), (req,
   const users = loadUsers();
   const user = users.find(u => u.id === req.params.id);
   if (!user) return res.status(404).json({ error: 'not_found' });
-  const { name, roleId, active, password, username } = req.body || {};
+  const { name, roleId, active, password, username, storeId } = req.body || {};
   const roles = loadRoles();
   if (roleId && !roles.some(r => r.id === roleId)) return res.status(400).json({ error: 'invalid_role' });
 
@@ -396,6 +409,7 @@ app.put('/api/users/:id', requireAuth, requirePermission('users', 'edit'), (req,
   }
   if (name !== undefined) user.name = name;
   if (roleId) user.roleId = roleId;
+  if (storeId !== undefined) user.storeId = storeId || null;
   if (active !== undefined) user.active = active;
   if (password) { const { salt, hash } = hashPassword(password); user.salt = salt; user.hash = hash; }
 

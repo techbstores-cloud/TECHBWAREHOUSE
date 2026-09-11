@@ -73,6 +73,9 @@
       <button class="nav-btn" data-view="dealers">
         <span class="nav-icon">&#128188;</span> Dealers
       </button>
+      <button class="nav-btn" data-view="localPurchases">
+        <span class="nav-icon">&#128179;</span> Local Purchases
+      </button>
       <button class="nav-btn" data-view="settings">
         <span class="nav-icon">&#9881;</span> Status Settings
       </button>
@@ -143,6 +146,7 @@
           <table class="data-table" id="recentDeliveriesTable">
             <thead>
               <tr>
+                <th>Delivery ID</th>
                 <th>Transfer ID</th>
                 <th>Store</th>
                 <th>Packages</th>
@@ -187,6 +191,7 @@
               <th>Serial No.</th>
               <th>Category</th>
               <th>Qty</th>
+              <th>No of Packages</th>
               <th>Dealer</th>
               <th>Received</th>
               <th>Days</th>
@@ -219,6 +224,7 @@
         <select id="taskFilterStatus">
           <option value="">All</option>
           <option value="pending">Pending</option>
+          <option value="partial">Partially Completed</option>
           <option value="completed">Completed</option>
         </select>
       </div>
@@ -272,9 +278,9 @@
         <table class="data-table" id="deliveryTable">
           <thead>
             <tr>
+              <th>Delivery ID</th>
               <th>Store</th>
               <th>Transfer ID</th>
-              <th>Box</th>
               <th>Packages</th>
               <th>Assigned to</th>
               <th>Date</th>
@@ -368,6 +374,7 @@
           <select id="taskReportFilterStatus">
             <option value="">All statuses</option>
             <option value="pending">Pending</option>
+            <option value="partial">Partially Completed</option>
             <option value="completed">Completed</option>
           </select>
         </div>
@@ -408,10 +415,10 @@
           <table class="data-table" id="deliveryReportTable">
             <thead>
               <tr>
+                <th>Delivery ID</th>
                 <th>Transfer ID</th>
                 <th>Store</th>
                 <th>Linked stock</th>
-                <th>Box</th>
                 <th>Packages</th>
                 <th>Assigned to</th>
                 <th>Date</th>
@@ -440,6 +447,7 @@
                 <th>Serial No.</th>
                 <th>Category</th>
                 <th>Dealer</th>
+                <th>No of Packages</th>
                 <th>Quantity</th>
                 <th>Received date</th>
                 <th>Status</th>
@@ -586,6 +594,52 @@
       <div class="empty-state" id="dealerEmpty" hidden>No dealers added yet. Click "+ Add dealer" to log one.</div>
     </section>
 
+    <!-- LOCAL PURCHASES -->
+    <section id="view-localPurchases" class="view">
+      <header class="view-header">
+        <h1>Local Purchases</h1>
+        <div class="header-actions">
+          <button class="secondary-btn" id="manageLpItemsBtn">Manage items</button>
+          <button class="secondary-btn" id="manageLpBrandModelBtn">Manage brand &amp; model</button>
+          <button class="secondary-btn" id="manageLocalDealersBtn">Manage dealers</button>
+          <button class="secondary-btn" id="manageLpReturnReasonsBtn">Manage return reasons</button>
+          <button class="secondary-btn" id="viewLpStockBtn">View stock</button>
+          <button class="primary-btn" id="addLocalPurchaseBtn">+ Add purchase</button>
+        </div>
+      </header>
+      <p class="hint" id="localPurchaseStoreHint" hidden></p>
+
+      <div class="filters">
+        <select id="lpFilterStore"><option value="">All stores</option></select>
+        <select id="lpFilterDealer"><option value="">All dealers</option></select>
+        <input type="date" id="lpFilterFrom">
+        <input type="date" id="lpFilterTo">
+        <input type="text" id="lpSearch" placeholder="Search item, brand, model, job card...">
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="data-table" id="localPurchaseTable">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Store</th>
+              <th>Item</th>
+              <th>Brand</th>
+              <th>Model</th>
+              <th>Dealer</th>
+              <th>Job Card #</th>
+              <th>Qty</th>
+              <th>Delivery Person</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="localPurchaseTableBody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="localPurchaseEmpty" hidden>No local purchases logged yet. Click "+ Add purchase" to log one.</div>
+    </section>
+
     <!-- SETTINGS: STATUS LIST -->
     <section id="view-settings" class="view">
       <header class="view-header">
@@ -619,7 +673,7 @@
       <div class="users-tab-panel" data-users-panel="users">
         <div style="overflow-x:auto">
           <table class="data-table" id="userTable">
-            <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Store</th><th>Status</th><th></th></tr></thead>
             <tbody id="userTableBody"></tbody>
           </table>
         </div>
@@ -663,6 +717,10 @@
 
 <div id="toast" class="toast" hidden></div>
 
+<!-- 80mm THERMAL PRINT SLIP -->
+<div id="printSlip"></div>
+
+<script src="vendor/xlsx.full.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
