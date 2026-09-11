@@ -319,6 +319,11 @@
         <button class="chip" data-report-type="stock">Stock received</button>
         <button class="chip" data-report-type="stockCategory">Stock by category</button>
         <button class="chip" data-report-type="stockDealer">Stock by dealer</button>
+        <button class="chip" data-report-type="localPurchases">Purchase report</button>
+        <button class="chip" data-report-type="lpItem">LP by item</button>
+        <button class="chip" data-report-type="lpBrand">LP by brand</button>
+        <button class="chip" data-report-type="lpDealer">LP by dealer</button>
+        <button class="chip" data-report-type="lpReturn">Return report</button>
         <button class="chip" data-report-type="store">Store activity</button>
       </div>
 
@@ -507,6 +512,139 @@
           </table>
         </div>
         <div class="empty-state" id="stockDealerReportEmpty" hidden>No stock received in this date range.</div>
+      </div>
+
+      <!-- PURCHASE REPORT -->
+      <div class="report-panel panel" data-report-panel="localPurchases" hidden>
+        <h2>Purchase report</h2>
+        <div class="filters">
+          <select id="lpReportFilterStore"><option value="">All stores</option></select>
+          <select id="lpReportFilterDealer"><option value="">All dealers</option></select>
+          <select id="lpReportFilterStatus">
+            <option value="">All statuses</option>
+            <option value="RECEIVED">Received</option>
+            <option value="CHECKING">Checking</option>
+            <option value="USED">Used</option>
+            <option value="RETURNED">Returned</option>
+          </select>
+        </div>
+        <div class="cards" id="lpReportCards" style="margin-bottom:14px"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="lpReportTable">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Store</th>
+                <th>Item</th>
+                <th>Brand</th>
+                <th>Model</th>
+                <th>Dealer</th>
+                <th>Job Card #</th>
+                <th>Qty</th>
+                <th>Delivery Person</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="lpReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="lpReportEmpty" hidden>No local purchases in this date range.</div>
+      </div>
+
+      <!-- LOCAL PURCHASES BY ITEM -->
+      <div class="report-panel panel" data-report-panel="lpItem" hidden>
+        <h2>Local purchases by item</h2>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="lpItemReportTable">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Entries</th>
+                <th>Total qty</th>
+                <th>Used qty</th>
+                <th>Returned qty</th>
+                <th>On hand qty</th>
+              </tr>
+            </thead>
+            <tbody id="lpItemReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="lpItemReportEmpty" hidden>No local purchases in this date range.</div>
+      </div>
+
+      <!-- LOCAL PURCHASES BY BRAND -->
+      <div class="report-panel panel" data-report-panel="lpBrand" hidden>
+        <h2>Local purchases by brand</h2>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="lpBrandReportTable">
+            <thead>
+              <tr>
+                <th>Brand</th>
+                <th>Entries</th>
+                <th>Total qty</th>
+                <th>Used qty</th>
+                <th>Returned qty</th>
+                <th>On hand qty</th>
+              </tr>
+            </thead>
+            <tbody id="lpBrandReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="lpBrandReportEmpty" hidden>No local purchases in this date range.</div>
+      </div>
+
+      <!-- LOCAL PURCHASES BY DEALER -->
+      <div class="report-panel panel" data-report-panel="lpDealer" hidden>
+        <h2>Local purchases by dealer</h2>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="lpDealerReportTable">
+            <thead>
+              <tr>
+                <th>Dealer</th>
+                <th>Phone</th>
+                <th>Entries</th>
+                <th>Total qty</th>
+                <th>Used qty</th>
+                <th>Returned qty</th>
+                <th>On hand qty</th>
+              </tr>
+            </thead>
+            <tbody id="lpDealerReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="lpDealerReportEmpty" hidden>No local purchases in this date range.</div>
+      </div>
+
+      <!-- RETURN REPORT -->
+      <div class="report-panel panel" data-report-panel="lpReturn" hidden>
+        <h2>Return report</h2>
+        <p class="hint" style="margin-top:0">Local purchases marked Returned, by the date they were returned.</p>
+        <div class="filters">
+          <select id="lpReturnReportFilterStore"><option value="">All stores</option></select>
+          <select id="lpReturnReportFilterDealer"><option value="">All dealers returned to</option></select>
+          <select id="lpReturnReportFilterReason"><option value="">All reasons</option></select>
+        </div>
+        <div class="cards" id="lpReturnReportCards" style="margin-bottom:14px"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="lpReturnReportTable">
+            <thead>
+              <tr>
+                <th>Return date</th>
+                <th>Store</th>
+                <th>Item</th>
+                <th>Brand</th>
+                <th>Model</th>
+                <th>Job Card #</th>
+                <th>Qty</th>
+                <th>Bought from</th>
+                <th>Returned to</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody id="lpReturnReportBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="lpReturnReportEmpty" hidden>No returns in this date range.</div>
       </div>
 
       <!-- STORE ACTIVITY -->

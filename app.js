@@ -1961,6 +1961,11 @@ function renderReports() {
   renderStockReport();
   renderStockCategoryReport();
   renderStockDealerReport();
+  renderLpReport();
+  renderLpItemReport();
+  renderLpBrandReport();
+  renderLpDealerReport();
+  renderLpReturnReport();
   renderStoreReport();
 }
 
@@ -2321,6 +2326,208 @@ function renderStockDealerReport() {
     </tr>`).join('');
 
   document.getElementById('stockDealerReportEmpty').hidden = rows.length !== 0;
+}
+
+/* =========================================================
+   LOCAL PURCHASES REPORTS
+   ========================================================= */
+function populateLpReportFilters() {
+  const storeSel = document.getElementById('lpReportFilterStore');
+  const dealerSel = document.getElementById('lpReportFilterDealer');
+  const storeCurrent = storeSel.value, dealerCurrent = dealerSel.value;
+  storeSel.innerHTML = '<option value="">All stores</option>' +
+    state.stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  dealerSel.innerHTML = '<option value="">All dealers</option>' +
+    state.localDealers.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
+  storeSel.value = storeCurrent;
+  dealerSel.value = dealerCurrent;
+}
+document.getElementById('lpReportFilterStore').addEventListener('change', renderLpReport);
+document.getElementById('lpReportFilterDealer').addEventListener('change', renderLpReport);
+document.getElementById('lpReportFilterStatus').addEventListener('change', renderLpReport);
+
+function renderLpReport() {
+  populateLpReportFilters();
+  const { from, to } = currentReportRange();
+  const storeFilter = document.getElementById('lpReportFilterStore').value;
+  const dealerFilter = document.getElementById('lpReportFilterDealer').value;
+  const statusFilter = document.getElementById('lpReportFilterStatus').value;
+
+  let rows = state.localPurchases.filter(p => inReportRange(p.date, from, to));
+  if (storeFilter) rows = rows.filter(p => p.storeId === storeFilter);
+  if (dealerFilter) rows = rows.filter(p => p.dealerId === dealerFilter);
+  if (statusFilter) rows = rows.filter(p => (p.status || 'RECEIVED') === statusFilter);
+  rows = [...rows].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  const usedCount = rows.filter(p => p.status === 'USED').length;
+  const returnedCount = rows.filter(p => p.status === 'RETURNED').length;
+  const onHandCount = rows.filter(p => (p.status || 'RECEIVED') === 'RECEIVED' || p.status === 'CHECKING').length;
+  const totalQty = rows.reduce((sum, p) => sum + (Number(p.quantity) || 1), 0);
+  document.getElementById('lpReportCards').innerHTML = `
+    <div class="card"><div class="card-value">${rows.length}</div><div class="card-label">Total entries</div></div>
+    <div class="card"><div class="card-value">${totalQty}</div><div class="card-label">Total quantity</div></div>
+    <div class="card"><div class="card-value">${onHandCount}</div><div class="card-label">On hand (received/checking)</div></div>
+    <div class="card"><div class="card-value">${usedCount}</div><div class="card-label">Used</div></div>
+    <div class="card"><div class="card-value">${returnedCount}</div><div class="card-label">Returned</div></div>
+  `;
+
+  document.getElementById('lpReportBody').innerHTML = rows.map(p => `
+    <tr>
+      <td>${fmtDate(p.date)}</td>
+      <td>${escapeHtml((storeById(p.storeId) || {}).name || '—')}</td>
+      <td><strong>${escapeHtml(p.itemName)}</strong></td>
+      <td>${escapeHtml(p.brand || '—')}</td>
+      <td>${escapeHtml(p.model || '—')}</td>
+      <td>${escapeHtml(localDealerLabel(p))}</td>
+      <td>${escapeHtml(p.jobCardNumber || '—')}</td>
+      <td>${p.quantity ?? 1}</td>
+      <td>${escapeHtml(p.deliveryPerson || '—')}</td>
+      <td>${escapeHtml(lpStatusLabel(p.status || 'RECEIVED'))}</td>
+    </tr>`).join('');
+
+  document.getElementById('lpReportEmpty').hidden = rows.length !== 0;
+}
+
+/* Shared grouping for the item/brand/dealer breakdown reports below --
+   buckets purchases by keyFn(purchase) and tallies quantity split by
+   status (used / returned / still on hand). */
+function groupLocalPurchases(rows, keyFn) {
+  const groups = new Map();
+  rows.forEach(p => {
+    const key = keyFn(p);
+    if (!groups.has(key)) groups.set(key, { key, count: 0, totalQty: 0, usedQty: 0, returnedQty: 0, onHandQty: 0 });
+    const g = groups.get(key);
+    const qty = Number(p.quantity) || 1;
+    g.count++;
+    g.totalQty += qty;
+    const status = p.status || 'RECEIVED';
+    if (status === 'USED') g.usedQty += qty;
+    else if (status === 'RETURNED') g.returnedQty += qty;
+    else g.onHandQty += qty;
+  });
+  return [...groups.values()].sort((a, b) => b.totalQty - a.totalQty);
+}
+
+function renderLpItemReport() {
+  const { from, to } = currentReportRange();
+  const rows = state.localPurchases.filter(p => inReportRange(p.date, from, to));
+  const list = groupLocalPurchases(rows, p => p.itemName || '—');
+
+  document.getElementById('lpItemReportBody').innerHTML = list.map(g => `
+    <tr>
+      <td><strong>${escapeHtml(g.key)}</strong></td>
+      <td>${g.count}</td>
+      <td>${g.totalQty}</td>
+      <td>${g.usedQty}</td>
+      <td>${g.returnedQty}</td>
+      <td>${g.onHandQty}</td>
+    </tr>`).join('');
+
+  document.getElementById('lpItemReportEmpty').hidden = list.length !== 0;
+}
+
+function renderLpBrandReport() {
+  const { from, to } = currentReportRange();
+  const rows = state.localPurchases.filter(p => inReportRange(p.date, from, to));
+  const list = groupLocalPurchases(rows, p => p.brand || '—');
+
+  document.getElementById('lpBrandReportBody').innerHTML = list.map(g => `
+    <tr>
+      <td><strong>${escapeHtml(g.key)}</strong></td>
+      <td>${g.count}</td>
+      <td>${g.totalQty}</td>
+      <td>${g.usedQty}</td>
+      <td>${g.returnedQty}</td>
+      <td>${g.onHandQty}</td>
+    </tr>`).join('');
+
+  document.getElementById('lpBrandReportEmpty').hidden = list.length !== 0;
+}
+
+function renderLpDealerReport() {
+  const { from, to } = currentReportRange();
+  const rows = state.localPurchases.filter(p => inReportRange(p.date, from, to));
+  const list = groupLocalPurchases(rows, p => p.dealerId || '');
+
+  document.getElementById('lpDealerReportBody').innerHTML = list.map(g => {
+    const dealer = localDealerById(g.key);
+    return `
+    <tr>
+      <td><strong>${escapeHtml(dealer ? dealer.name : 'Unknown dealer')}</strong></td>
+      <td>${escapeHtml(dealer ? (dealer.phone || '—') : '—')}</td>
+      <td>${g.count}</td>
+      <td>${g.totalQty}</td>
+      <td>${g.usedQty}</td>
+      <td>${g.returnedQty}</td>
+      <td>${g.onHandQty}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('lpDealerReportEmpty').hidden = list.length !== 0;
+}
+
+function populateLpReturnReportFilters() {
+  const storeSel = document.getElementById('lpReturnReportFilterStore');
+  const dealerSel = document.getElementById('lpReturnReportFilterDealer');
+  const reasonSel = document.getElementById('lpReturnReportFilterReason');
+  const storeCurrent = storeSel.value, dealerCurrent = dealerSel.value, reasonCurrent = reasonSel.value;
+  storeSel.innerHTML = '<option value="">All stores</option>' +
+    state.stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  dealerSel.innerHTML = '<option value="">All dealers returned to</option>' +
+    state.localDealers.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
+  reasonSel.innerHTML = '<option value="">All reasons</option>' +
+    state.lpReturnReasons.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
+  storeSel.value = storeCurrent;
+  dealerSel.value = dealerCurrent;
+  reasonSel.value = reasonCurrent;
+}
+document.getElementById('lpReturnReportFilterStore').addEventListener('change', renderLpReturnReport);
+document.getElementById('lpReturnReportFilterDealer').addEventListener('change', renderLpReturnReport);
+document.getElementById('lpReturnReportFilterReason').addEventListener('change', renderLpReturnReport);
+
+/* Returned local purchases, reported by returnDate (not the original
+   purchase date) -- this is when the item actually went back out. */
+function renderLpReturnReport() {
+  populateLpReturnReportFilters();
+  const { from, to } = currentReportRange();
+  const storeFilter = document.getElementById('lpReturnReportFilterStore').value;
+  const dealerFilter = document.getElementById('lpReturnReportFilterDealer').value;
+  const reasonFilter = document.getElementById('lpReturnReportFilterReason').value;
+
+  let rows = state.localPurchases.filter(p => p.status === 'RETURNED' && inReportRange(p.returnDate, from, to));
+  if (storeFilter) rows = rows.filter(p => p.storeId === storeFilter);
+  if (dealerFilter) rows = rows.filter(p => p.returnDealerId === dealerFilter);
+  if (reasonFilter) rows = rows.filter(p => p.returnReasonId === reasonFilter);
+  rows = [...rows].sort((a, b) => (b.returnDate || '').localeCompare(a.returnDate || ''));
+
+  const totalQty = rows.reduce((sum, p) => sum + (Number(p.quantity) || 1), 0);
+  const dealerCount = new Set(rows.map(p => p.returnDealerId).filter(Boolean)).size;
+  document.getElementById('lpReturnReportCards').innerHTML = `
+    <div class="card"><div class="card-value">${rows.length}</div><div class="card-label">Total returns</div></div>
+    <div class="card"><div class="card-value">${totalQty}</div><div class="card-label">Total returned quantity</div></div>
+    <div class="card"><div class="card-value">${dealerCount}</div><div class="card-label">Dealers returned to</div></div>
+  `;
+
+  document.getElementById('lpReturnReportBody').innerHTML = rows.map(p => {
+    const boughtFrom = localDealerById(p.dealerId);
+    const returnedTo = localDealerById(p.returnDealerId);
+    const reason = lpReturnReasonById(p.returnReasonId);
+    return `
+    <tr>
+      <td>${fmtDate(p.returnDate)}</td>
+      <td>${escapeHtml((storeById(p.storeId) || {}).name || '—')}</td>
+      <td><strong>${escapeHtml(p.itemName)}</strong></td>
+      <td>${escapeHtml(p.brand || '—')}</td>
+      <td>${escapeHtml(p.model || '—')}</td>
+      <td>${escapeHtml(p.jobCardNumber || '—')}</td>
+      <td>${p.quantity ?? 1}</td>
+      <td>${escapeHtml(boughtFrom ? boughtFrom.name : '—')}</td>
+      <td>${escapeHtml(returnedTo ? returnedTo.name : '—')}</td>
+      <td>${escapeHtml(reason ? reason.name : '—')}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('lpReturnReportEmpty').hidden = rows.length !== 0;
 }
 
 function renderStoreReport() {
@@ -2731,6 +2938,10 @@ const LP_STATUSES = [
   { id: 'USED', label: 'Used' },
   { id: 'RETURNED', label: 'Returned' }
 ];
+function lpStatusLabel(statusId) {
+  const s = LP_STATUSES.find(s => s.id === statusId);
+  return s ? s.label : (statusId || '—');
+}
 function lpReturnReasonById(id) { return state.lpReturnReasons.find(r => r.id === id); }
 
 function openLocalDealerManager() {
