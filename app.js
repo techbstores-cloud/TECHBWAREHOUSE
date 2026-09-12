@@ -453,7 +453,7 @@ function buildTagInput(initialValues, placeholder) {
    so the result is always a real catalog entry, never free text).
    Reuses .multiselect/.multiselect-panel so it gets the same
    click-outside-to-close behavior as the multi-select above for free. */
-function buildSearchSelect({ items, getId, getLabel, initialId, placeholder }) {
+function buildSearchSelect({ items, getId, getLabel, initialId, placeholder, onSelect, disabled }) {
   let selectedId = initialId || null;
   const wrap = document.createElement('div');
   wrap.className = 'multiselect';
@@ -463,6 +463,7 @@ function buildSearchSelect({ items, getId, getLabel, initialId, placeholder }) {
   input.className = 'multiselect-toggle';
   input.placeholder = placeholder || 'Search...';
   input.autocomplete = 'off';
+  if (disabled) input.disabled = true;
 
   const panel = document.createElement('div');
   panel.className = 'multiselect-panel';
@@ -489,6 +490,7 @@ function buildSearchSelect({ items, getId, getLabel, initialId, placeholder }) {
         selectedId = getId(it);
         input.value = getLabel(it);
         panel.hidden = true;
+        if (onSelect) onSelect(it);
       });
       panel.appendChild(row);
     });
@@ -2894,6 +2896,9 @@ function localDealerLabel(item) {
 }
 function lpItemCatalogById(id) { return state.lpItemCatalog.find(i => i.id === id); }
 function lpBrandModelById(id) { return state.lpBrandModelCatalog.find(bm => bm.id === id); }
+function lpBrandList() {
+  return [...new Set(state.lpBrandModelCatalog.map(bm => bm.brand))].sort((a, b) => a.localeCompare(b));
+}
 function lpBrandModelLabel(bm) { return `${bm.brand} — ${bm.model}`; }
 
 /* Reads an uploaded .xlsx/.xls/.csv File (via the vendored SheetJS
@@ -3518,8 +3523,12 @@ function openLocalPurchaseForm(editId) {
         <div id="f-lpItemWrap"></div>
       </div>
       <div class="form-group">
-        <label>Brand &amp; Model</label>
-        <div id="f-lpBrandModelWrap"></div>
+        <label>Brand</label>
+        <div id="f-lpBrandWrap"></div>
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <div id="f-lpModelWrap"></div>
       </div>
       <div class="form-group">
         <label>Dealer</label>
@@ -3560,21 +3569,42 @@ function openLocalPurchaseForm(editId) {
     });
     body.querySelector('#f-lpItemWrap').appendChild(itemSelect.el);
 
-    const brandModelSelect = buildSearchSelect({
-      items: state.lpBrandModelCatalog,
-      getId: bm => bm.id,
-      getLabel: bm => lpBrandModelLabel(bm),
-      initialId: purchase ? purchase.brandModelId : null,
-      placeholder: 'Search brand / model...'
+    const existingBrandModel = purchase ? lpBrandModelById(purchase.brandModelId) : null;
+    const initialBrand = existingBrandModel ? existingBrandModel.brand : null;
+
+    let modelSelect = null;
+    function renderModelOptions(brand, initialModelId) {
+      const modelWrap = body.querySelector('#f-lpModelWrap');
+      modelWrap.innerHTML = '';
+      const models = brand ? state.lpBrandModelCatalog.filter(bm => bm.brand === brand) : [];
+      modelSelect = buildSearchSelect({
+        items: models,
+        getId: bm => bm.id,
+        getLabel: bm => bm.model,
+        initialId: initialModelId || null,
+        placeholder: brand ? 'Search model...' : 'Select a brand first',
+        disabled: !brand
+      });
+      modelWrap.appendChild(modelSelect.el);
+    }
+
+    const brandSelect = buildSearchSelect({
+      items: lpBrandList().map(b => ({ id: b, name: b })),
+      getId: b => b.id,
+      getLabel: b => b.name,
+      initialId: initialBrand,
+      placeholder: 'Search brand...',
+      onSelect: b => renderModelOptions(b.id, null)
     });
-    body.querySelector('#f-lpBrandModelWrap').appendChild(brandModelSelect.el);
+    body.querySelector('#f-lpBrandWrap').appendChild(brandSelect.el);
+    renderModelOptions(initialBrand, purchase ? purchase.brandModelId : null);
 
     body.querySelector('#cancelBtn').addEventListener('click', closeModal);
     body.querySelector('#localPurchaseForm').addEventListener('submit', e => {
       e.preventDefault();
       const storeId = document.getElementById('f-lpStore').value;
       const itemId = itemSelect.getValue();
-      const brandModelId = brandModelSelect.getValue();
+      const brandModelId = modelSelect ? modelSelect.getValue() : null;
       const dealerId = document.getElementById('f-lpDealer').value;
       const jobCardNumber = document.getElementById('f-lpJobCard').value.trim();
       const quantity = Number(document.getElementById('f-lpQuantity').value) || 1;
@@ -3583,7 +3613,8 @@ function openLocalPurchaseForm(editId) {
       const notes = document.getElementById('f-lpNotes').value.trim();
       if (!storeId || !dealerId || !date || !deliveryPerson || !jobCardNumber) return;
       if (!itemId) { showToast('Pick an item name from the list'); return; }
-      if (!brandModelId) { showToast('Pick a brand & model from the list'); return; }
+      if (!brandSelect.getValue()) { showToast('Pick a brand from the list'); return; }
+      if (!brandModelId) { showToast('Pick a model from the list'); return; }
 
       const item = lpItemCatalogById(itemId);
       const brandModel = lpBrandModelById(brandModelId);
