@@ -24,6 +24,7 @@ function uid() {
 const MODULES = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'stock', label: 'Stock Tracking' },
+  { id: 'stockSkipStages', label: 'Stock Tracking: Skip Status Stages' },
   { id: 'tasks', label: 'Daily Tasks' },
   { id: 'tasksLateComplete', label: 'Complete Tasks After Due Date' },
   { id: 'deliveries', label: 'Deliveries' },
@@ -135,6 +136,20 @@ function ensureSeedRolesAndAdmin() {
     ];
     saveRoles(roles);
   }
+
+  // Roles saved before "Skip Status Stages" existed have no opinion on it.
+  // Grant it to Administrator/Manager so upgrading doesn't silently take
+  // away access they already relied on; every other role stays at 'none'
+  // via normalizePermissions' default, same as any other missing key.
+  let rolesChanged = false;
+  roles.forEach(r => {
+    if (r.permissions && r.permissions.stockSkipStages === undefined && (r.name === 'Administrator' || r.name === 'Manager')) {
+      r.permissions.stockSkipStages = 'edit';
+      rolesChanged = true;
+    }
+  });
+  if (rolesChanged) saveRoles(roles);
+
   const adminRole = roles.find(r => r.name === 'Administrator') || roles[0];
 
   const users = loadUsers();

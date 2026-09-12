@@ -736,11 +736,13 @@ function daysSince(dateStr) {
 function isStockDelayed(item) {
   return statusProgressPct(item.statusId) !== 100 && daysSince(item.receivedDate) > DELAY_THRESHOLD_DAYS;
 }
-/* Administrators can jump straight to any stage (to fix mistakes); everyone
-   else must advance one stage at a time so stock can't skip straight to
-   "Transferred to Office" without passing through verification etc. */
+/* Roles with the "Stock Tracking: Skip Status Stages" permission can jump
+   straight to any stage (to fix mistakes); everyone else must advance one
+   stage at a time so stock can't skip straight to "Transferred to Office"
+   without passing through verification etc. Configured per-role in Users
+   & Roles, not hardcoded to a role name. */
 function canSkipStockStages() {
-  return currentRoleName === 'Administrator';
+  return canEdit('stockSkipStages');
 }
 function isDeliveryDelayed(delivery) {
   return delivery.status !== 'delivered' && daysSince(delivery.date) > DELAY_THRESHOLD_DAYS;
@@ -4207,15 +4209,21 @@ function permMatrixHtml(existingPermissions) {
       <tbody>
         ${modules.map(m => {
           const current = (existingPermissions && existingPermissions[m.id]) || 'none';
+          const isSkipStagesToggle = m.id === 'stockSkipStages';
+          const levels = isSkipStagesToggle ? ['none', 'edit'] : ['none', 'view', 'edit'];
+          const levelLabel = level => {
+            if (isSkipStagesToggle) return level === 'edit' ? 'Can skip ahead' : 'Must go stage by stage';
+            return level === 'none' ? 'No access' : level === 'view' ? 'View only' : 'Full access';
+          };
           return `
             <tr>
               <td class="module-name">${escapeHtml(m.label)}</td>
               <td>
                 <div class="perm-options">
-                  ${['none', 'view', 'edit'].map(level => `
+                  ${levels.map(level => `
                     <label>
                       <input type="radio" name="perm-${m.id}" value="${level}" ${current === level ? 'checked' : ''}>
-                      ${level === 'none' ? 'No access' : level === 'view' ? 'View only' : 'Full access'}
+                      ${levelLabel(level)}
                     </label>`).join('')}
                 </div>
               </td>
