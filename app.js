@@ -736,6 +736,12 @@ function daysSince(dateStr) {
 function isStockDelayed(item) {
   return statusProgressPct(item.statusId) !== 100 && daysSince(item.receivedDate) > DELAY_THRESHOLD_DAYS;
 }
+/* Administrators can jump straight to any stage (to fix mistakes); everyone
+   else must advance one stage at a time so stock can't skip straight to
+   "Transferred to Office" without passing through verification etc. */
+function canSkipStockStages() {
+  return currentRoleName === 'Administrator';
+}
 function isDeliveryDelayed(delivery) {
   return delivery.status !== 'delivered' && daysSince(delivery.date) > DELAY_THRESHOLD_DAYS;
 }
@@ -847,7 +853,11 @@ function renderStock() {
         <td style="${delayed ? 'color:var(--red);font-weight:600' : ''}">${days}d</td>
         <td>
           <select class="status-select" data-id="${item.id}">
-            ${state.statuses.map(s => `<option value="${s.id}" ${s.id === item.statusId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+            ${state.statuses.map((s, i) => {
+              const currentIdx = state.statuses.findIndex(st => st.id === item.statusId);
+              const locked = !canSkipStockStages() && i > currentIdx + 1;
+              return `<option value="${s.id}" ${s.id === item.statusId ? 'selected' : ''} ${locked ? 'disabled' : ''}>${escapeHtml(s.name)}${locked ? ' (complete earlier stages first)' : ''}</option>`;
+            }).join('')}
           </select>
         </td>
         <td>${progressBarHtml(pct)}</td>
@@ -879,6 +889,13 @@ function renderStock() {
     sel.addEventListener('change', () => {
       const newStatusId = sel.value;
       const item = state.stockItems.find(i => i.id === sel.dataset.id);
+      const currentIdx = state.statuses.findIndex(st => st.id === item.statusId);
+      const newIdx = state.statuses.findIndex(st => st.id === newStatusId);
+      if (!canSkipStockStages() && newIdx > currentIdx + 1) {
+        sel.value = item.statusId;
+        showToast(`Complete "${state.statuses[currentIdx + 1].name}" first — stages can't be skipped`);
+        return;
+      }
       if (isVerificationDoneStatus(newStatusId)) {
         const prevStatusId = item.statusId;
         sel.value = prevStatusId; // revert until quantity is confirmed; renderStock() sets the real value after
