@@ -792,6 +792,8 @@ function populateStockFilters() {
 document.getElementById('stockFilterCategory').addEventListener('change', renderStock);
 document.getElementById('stockFilterDealer').addEventListener('change', renderStock);
 document.getElementById('stockFilterStatus').addEventListener('change', renderStock);
+document.getElementById('stockFilterFrom').addEventListener('change', renderStock);
+document.getElementById('stockFilterTo').addEventListener('change', renderStock);
 document.getElementById('stockSearchSerial').addEventListener('input', renderStock);
 
 let stockTab = 'active';
@@ -817,6 +819,8 @@ function renderStock() {
   const categoryFilter = document.getElementById('stockFilterCategory').value;
   const dealerFilter = document.getElementById('stockFilterDealer').value;
   const statusFilter = document.getElementById('stockFilterStatus').value;
+  const fromFilter = document.getElementById('stockFilterFrom').value;
+  const toFilter = document.getElementById('stockFilterTo').value;
   const serialSearch = document.getElementById('stockSearchSerial').value.trim().toLowerCase();
 
   let items = [...state.stockItems];
@@ -830,6 +834,8 @@ function renderStock() {
   if (categoryFilter) items = items.filter(i => i.categoryId === categoryFilter);
   if (dealerFilter) items = items.filter(i => i.dealerId === dealerFilter);
   if (statusFilter) items = items.filter(i => i.statusId === statusFilter);
+  if (fromFilter) items = items.filter(i => i.receivedDate && i.receivedDate >= fromFilter);
+  if (toFilter) items = items.filter(i => i.receivedDate && i.receivedDate <= toFilter);
   if (serialSearch) items = items.filter(i => (i.serialNumber || '').toLowerCase().includes(serialSearch));
 
   items.sort(stockTab === 'delayed'
